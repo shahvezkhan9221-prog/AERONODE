@@ -18,17 +18,21 @@ test("server-renders the Aero-Node command surface", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /Aero-Node Rescue Command/i);
-  assert.match(html, /CONNECT ESP32/);
-  assert.match(html, /LIVE OPERATIONS MAP/);
-  assert.match(html, /SERIAL GATEWAY/);
-  assert.match(html, /property="og:image" content="http:\/\/localhost\/og\.png"/);
+  assert.match(html, /Connect ESP32/);
+  assert.match(html, /LIVE MAP/);
+  assert.match(html, /Serial activity/);
+  assert.match(html, /No signals yet/);
+  assert.match(html, />0(?:<!-- -->)?<\/strong><small>Nodes/);
+  assert.match(html, />0(?:<!-- -->)?<\/strong><small>Signals/);
+  assert.doesNotMatch(html, /Unknown survivor|Recon Team|AN-01 heartbeat/);
+  assert.match(html, /property="og:image" content="http:\/\/localhost\/og-v2\.png"/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
 });
 
 test("ships the expected local-first protocol hooks", async () => {
   const page = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/page.tsx", import.meta.url), "utf8"));
   assert.match(page, /baudRate: 115200/);
-  assert.match(page, /TextDecoderStream/);
+  assert.match(page, /readable\.getReader\(\)/);
   assert.match(page, /type: "reply"/);
   assert.match(page, /\["sos", "message", "member", "user"\]/);
 });
