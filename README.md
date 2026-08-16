@@ -1,6 +1,6 @@
 # Aero-Node Rescue Command
 
-Laptop command surface for the Aero-Node off-grid LoRa rescue mesh. It uses the browser's Web Serial API to communicate directly with the ESP32 gateway over USB at 115200 baud—no separate Node.js bridge is required for the prototype.
+Laptop command surface and ESP32 firmware for the Aero-Node off-grid LoRa rescue mesh. The dashboard uses Web Serial to communicate directly with the master gateway over USB at 115200 baud, manages one private conversation per survivor, and maps nodes and checked-in users with Google Maps.
 
 ## Run locally
 
@@ -11,6 +11,18 @@ npm run dev
 
 Open `http://localhost:3000` in current Chrome or Edge, select **Connect ESP32**, and choose the ESP32 USB serial port. Close Arduino Serial Monitor first because only one application can own the port.
 
+Create `.dev.vars` for Google Maps when running locally:
+
+```bash
+GOOGLE_MAPS_API_KEY=your_restricted_browser_key
+```
+
+Enable the Google Maps JavaScript API and restrict the key to the deployed website. The key is intentionally not stored in this repository.
+
+## ESP32 firmware
+
+Flash [`firmware/aero_node_master_private_chat_gps.ino`](firmware/aero_node_master_private_chat_gps.ino) to the ESP32 master gateway. It creates the `AERO-NODE` access point and rescue portal at `http://192.168.4.1`, assigns each phone a persistent user ID, reports check-ins and messages as JSON over Serial, and delivers command replies only to the addressed user.
+
 ## Serial protocol
 
 The dashboard accepts newline-delimited JSON. A field node can transmit an SOS packet through LoRa, and the master can print the packet unchanged with `Serial.println(message)`:
@@ -19,26 +31,28 @@ The dashboard accepts newline-delimited JSON. A field node can transmit an SOS p
 {"type":"sos","nodeId":"AN-02","userId":"SUR-218","name":"Unknown survivor","lat":23.0227,"lng":72.5743,"message":"Two people trapped","priority":"critical","battery":34,"rssi":-91}
 ```
 
-Node heartbeat/telemetry:
+Master or field-node heartbeat/telemetry:
 
 ```json
-{"type":"telemetry","nodeId":"AN-02","label":"Market Sector","lat":23.0219,"lng":72.5752,"battery":64,"rssi":-91,"people":5}
+{"type":"telemetry","nodeId":"MASTER","label":"Laptop Gateway","clients":2}
 ```
 
-The dashboard also accepts the current test firmware's `PHONE:` and `RELAY:` lines. Those legacy messages have no GPS data, so they are placed at the relaying node's position.
+The dashboard also accepts legacy `PHONE:` and `RELAY:` lines. Legacy messages without GPS are mapped approximately around the master node.
 
 Replies are written back to USB as one JSON line:
 
 ```json
-{"type":"reply","to":"SUR-218","nodeId":"AN-02","message":"Rescue team is en route.","ts":1786860000000}
+{"type":"command","to":"USR-ABC12345","message":"Rescue team is en route."}
 ```
 
-Your current master firmware already forwards that line over LoRa with its `MASTER:` prefix. The field firmware should remove the prefix, parse the JSON, and deliver the message to the intended local user.
+The supplied firmware stores the reply for only that user and forwards a compact targeted command over LoRa.
 
 ## Important deployment notes
 
 - Web Serial requires a secure context: HTTPS in production or `localhost` during development.
-- The visible map uses OpenStreetMap tiles. Markers still function without tiles, but a fully off-grid deployment should run a local tile server or package offline tiles.
+- Google Maps requires internet access on the command laptop. Serial communication, private chat and LoRa continue locally if map imagery is unavailable.
+- Browser geolocation can fail on desktop Linux even when permission is allowed. The dashboard automatically offers click-to-place mode for the master node.
+- Phone geolocation normally requires HTTPS. The HTTP captive portal therefore falls back to a clearly marked approximate node-area position when exact GPS is unavailable.
 - LoRa CRC detects corruption; it does not authenticate or encrypt packets. Add application-layer encryption, message authentication, per-node keys, and replay protection before field deployment.
 - The ESP access point in the supplied prototype firmware is open. Use device provisioning and a protected rescue workflow before treating the network as production-secure.
 
