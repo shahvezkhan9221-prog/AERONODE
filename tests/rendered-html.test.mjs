@@ -41,4 +41,6 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /JSON\.stringify\(\{ type: "command", to: selected\.id, message \}\)/);
   assert.match(page, /\["user", "member", "location", "message", "sos"\]/);
   assert.match(page, /selectedMessages/);
+  assert.match(page, /locationKind: "approximate"/);
+  assert.match(page, /Mapped near master · approximate/);
 });

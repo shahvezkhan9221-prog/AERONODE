@@ -5,7 +5,7 @@ import CommandMap from "./CommandMap";
 
 type Priority = "critical" | "normal";
 type View = "map" | "people" | "traffic";
-type Person = { id: string; name: string; nodeId: string; priority: Priority; lastMessage: string; lastSeen: string; lat?: number; lng?: number; online: boolean };
+type Person = { id: string; name: string; nodeId: string; priority: Priority; lastMessage: string; lastSeen: string; lat?: number; lng?: number; online: boolean; locationKind?: "exact" | "approximate" };
 type ChatMessage = { id: string; userId: string; direction: "incoming" | "outgoing"; text: string; at: string; priority: Priority };
 type NodeUnit = { id: string; label: string; online: boolean; battery?: number; rssi?: number; lat?: number; lng?: number; clients?: number };
 type LogItem = { id: number; at: string; type: "RX" | "TX" | "INFO" | "ERROR"; text: string; bytes: number };
@@ -44,12 +44,19 @@ export default function Home() {
   const placeholderCount = Math.max(0, wifiUsers - people.length);
   const approximatePeople = useMemo<Person[]>(() => {
     const master = nodes.find((node) => node.id === "MASTER" && Number.isFinite(node.lat) && Number.isFinite(node.lng));
-    if (!master || placeholderCount < 1) return [];
-    return Array.from({ length: placeholderCount }, (_, index) => {
-      const angle = (index / placeholderCount) * Math.PI * 2;
-      return { id: `UNREGISTERED-${index + 1}`, name: `Connected device ${index + 1}`, nodeId: "MASTER", priority: "normal", lastMessage: "Waiting for rescue portal check-in", lastSeen: "online", online: true, lat: (master.lat as number) + Math.cos(angle) * 0.00018, lng: (master.lng as number) + Math.sin(angle) * 0.00018 };
-    });
-  }, [nodes, placeholderCount]);
+    if (!master) return [];
+    const unlocated = people.filter((person) => !Number.isFinite(person.lat) || !Number.isFinite(person.lng));
+    const total = unlocated.length + placeholderCount;
+    if (total < 1) return [];
+    const aroundMaster = (index: number) => {
+      const angle = (index / total) * Math.PI * 2;
+      const radius = 0.00018 + (index % 2) * 0.00007;
+      return { lat: (master.lat as number) + Math.cos(angle) * radius, lng: (master.lng as number) + Math.sin(angle) * radius };
+    };
+    const checkedIn = unlocated.map((person, index) => ({ ...person, ...aroundMaster(index), locationKind: "approximate" as const }));
+    const unknown = Array.from({ length: placeholderCount }, (_, index) => ({ id: `UNREGISTERED-${index + 1}`, name: `Connected device ${index + 1}`, nodeId: "MASTER", priority: "normal" as const, lastMessage: "Waiting for rescue portal check-in", lastSeen: "online", online: true, ...aroundMaster(unlocated.length + index), locationKind: "approximate" as const }));
+    return [...checkedIn, ...unknown];
+  }, [nodes, people, placeholderCount]);
   const mappedPeople = useMemo(() => [...locatedPeople, ...approximatePeople], [locatedPeople, approximatePeople]);
 
   const addLog = useCallback((type: LogItem["type"], text: string) => {
@@ -95,7 +102,9 @@ export default function Home() {
         const id = String(packet.userId ?? packet.user_id ?? packet.id ?? `USR-${Date.now()}`);
         const priority: Priority = type === "sos" || String(packet.priority ?? "").toLowerCase() === "critical" ? "critical" : "normal";
         const messageText = String(packet.message ?? packet.text ?? "");
-        upsertPerson({ id, name: String(packet.name ?? `Survivor ${id.slice(-4)}`), nodeId, priority, lastMessage: messageText, lastSeen: timeNow(), lat: numberOrUndefined(packet.lat), lng: numberOrUndefined(packet.lng ?? packet.lon), online: true });
+        const lat = numberOrUndefined(packet.lat);
+        const lng = numberOrUndefined(packet.lng ?? packet.lon);
+        upsertPerson({ id, name: String(packet.name ?? `Survivor ${id.slice(-4)}`), nodeId, priority, lastMessage: messageText, lastSeen: timeNow(), lat, lng, online: true, locationKind: lat !== undefined && lng !== undefined ? "exact" : undefined });
         if (messageText && ["message", "sos"].includes(type)) {
           setMessages((current) => [...current, { id: `MSG-${Date.now()}-${Math.random()}`, userId: id, direction: "incoming", text: messageText, at: timeNow(), priority }]);
           setSelectedId(id);
@@ -203,12 +212,12 @@ export default function Home() {
 
       {view === "map" && <section className="map-dashboard">
         <section className="map-card glass"><div className="card-heading"><div><small>LIVE OPERATIONS MAP</small><h2>People and nodes</h2></div><div className="map-actions"><span>{locatedNodes.length + mappedPeople.length} mapped</span><button onClick={locateMaster} disabled={locationState === "locating"}>{locationState === "located" ? "✓ Laptop located" : locationState === "locating" ? "Locating…" : "Use laptop location"}</button></div></div><div className="map-wrap"><CommandMap nodes={locatedNodes} people={mappedPeople} selectedId={selectedId ?? ""} onSelect={openConversation} />{locatedNodes.length + mappedPeople.length === 0 && <div className="map-empty glass"><Empty icon="⌖" title="No locations received" text="Connect the gateway and allow laptop location." /></div>}</div><p className="map-caption"><b>Location confidence:</b> checked-in users with shared GPS are exact. Connected devices without GPS are placed approximately near the master.</p></section>
-        <aside className="roster-card glass"><div className="card-heading"><div><small>PEOPLE IN RANGE</small><h2>Recent check-ins</h2></div><span className="count-pill">{people.length}</span></div><div className="roster-list">{people.length === 0 ? <Empty icon="◌" title="No one checked in" text="A person appears here after opening the rescue portal." /> : people.map((person) => <button key={person.id} className="roster-person" onClick={() => openConversation(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "Connected to rescue portal"}</p><small>{person.lat !== undefined ? "GPS shared" : "Location pending"} · {person.lastSeen}</small></div><span>→</span></button>)}</div>{placeholderCount > 0 && <div className="pending-devices"><span>⌁</span><div><b>{placeholderCount} connected {placeholderCount === 1 ? "device" : "devices"} not checked in</b><small>Ask them to open 192.168.4.1</small></div></div>}</aside>
+        <aside className="roster-card glass"><div className="card-heading"><div><small>PEOPLE IN RANGE</small><h2>Recent check-ins</h2></div><span className="count-pill">{people.length}</span></div><div className="roster-list">{people.length === 0 ? <Empty icon="◌" title="No one checked in" text="A person appears here after opening the rescue portal." /> : people.map((person) => <button key={person.id} className="roster-person" onClick={() => openConversation(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "Connected to rescue portal"}</p><small>{person.lat !== undefined ? "Exact GPS shared" : "Mapped near master · approximate"} · {person.lastSeen}</small></div><span>→</span></button>)}</div>{placeholderCount > 0 && <div className="pending-devices"><span>⌁</span><div><b>{placeholderCount} connected {placeholderCount === 1 ? "device" : "devices"} not checked in</b><small>Ask them to open 192.168.4.1</small></div></div>}</aside>
       </section>}
 
       {view === "people" && <section className="conversation-shell glass">
         <aside className="conversation-list"><div className="conversation-list-head"><small>ACTIVE PEOPLE</small><h2>Conversations</h2><p>Each phone has an independent thread.</p></div><div className="conversation-scroll">{people.length === 0 ? <Empty icon="◌" title="No conversations" text="Incoming messages create a separate person here." /> : people.map((person) => <button key={person.id} className={selectedId === person.id ? "selected" : ""} onClick={() => setSelectedId(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "New connection"}</p><small>{person.id} · {person.lastSeen}</small></div>{person.priority === "critical" && <i>!</i>}</button>)}</div></aside>
-        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "GPS shared" : "GPS pending"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Messages from this person will appear only in this thread." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small><p>{message.text}</p><time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={220} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/220 · sent only to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
+        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "Exact GPS shared" : "Node-area location · approximate"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Messages from this person will appear only in this thread." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small><p>{message.text}</p><time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={220} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/220 · sent only to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
       </section>}
 
       {view === "traffic" && <section className="traffic-panel glass"><header><div><small>SERIAL MONITOR</small><h2>Live gateway traffic</h2><p>USB ↔ ESP32 ↔ LoRa at 115200 baud</p></div><div className="traffic-legend"><span><i className="rx-dot" />Received</span><span><i className="tx-dot" />Sent</span><button onClick={() => setLogs([])}>Clear traffic</button></div></header><div className="traffic-table"><div className="traffic-row traffic-labels"><span>TIME</span><span>TYPE</span><span>SIZE</span><span>PACKET</span></div>{logs.length === 0 ? <Empty icon="↕" title="Traffic cleared" text="New serial packets will appear here." /> : logs.slice().reverse().map((log) => <div className="traffic-row" key={log.id}><time>{log.at}</time><b className={log.type.toLowerCase()}>{log.type}</b><em>{log.bytes > 0 ? `${log.bytes} B` : "—"}</em><p>{log.text}</p></div>)}</div></section>}
