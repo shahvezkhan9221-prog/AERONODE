@@ -28,7 +28,7 @@ test("server-renders the Aero-Node command surface", async () => {
   assert.match(html, /No one checked in/);
   assert.match(html, />0(?:<!-- -->)?<\/strong><small>Checked in/);
   assert.doesNotMatch(html, /Unknown survivor|Recon Team|AN-01 heartbeat/);
-  assert.match(html, /property="og:image" content="http:\/\/localhost\/og-v2\.png"/);
+  assert.match(html, /property="og:image" content="http:\/\/localhost\/og-v3\.png"/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/);
 });
 

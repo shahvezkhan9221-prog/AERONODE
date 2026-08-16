@@ -19,12 +19,12 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = incoming.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const metadataBase = new URL(`${protocol}://${host}`);
   const title = "Aero-Node Rescue Command";
-  const description = "A clear, real-time map and serial communication dashboard for Aero-Node rescue networks.";
+  const description = "A command-grade live operations dashboard for Aero-Node rescue mesh networks, survivor locations and field communications.";
   return {
     metadataBase, title, description,
     icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
-    openGraph: { title, description, type: "website", images: [{ url: "/og-v2.png", width: 1731, height: 909, alt: "Aero-Node bright rescue dashboard" }] },
-    twitter: { card: "summary_large_image", title, description, images: ["/og-v2.png"] },
+    openGraph: { title, description, type: "website", images: [{ url: "/og-v3.png", width: 1734, height: 907, alt: "Aero-Node Rescue Command mesh operations map" }] },
+    twitter: { card: "summary_large_image", title, description, images: ["/og-v3.png"] },
   };
 }
 

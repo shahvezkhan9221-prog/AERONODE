@@ -229,19 +229,21 @@ export default function Home() {
   return (
     <main className="app-shell">
       <header className="app-header glass">
-        <div className="logo"><span>A</span><div><b>Aero-Node</b><small>Rescue command</small></div></div>
+        <div className="logo"><span>A</span><div><b>Aero-Node</b><small>Emergency response OS</small></div></div>
         <nav className="top-nav" aria-label="Dashboard sections">
-          <button className={view === "map" ? "active" : ""} onClick={() => setView("map")}><span>⌖</span>Live map</button>
-          <button className={view === "people" ? "active" : ""} onClick={() => setView("people")}><span>◌</span>Conversations{people.length > 0 && <i>{people.length}</i>}</button>
-          <button className={view === "traffic" ? "active" : ""} onClick={() => setView("traffic")}><span>↕</span>Traffic</button>
+          <button className={view === "map" ? "active" : ""} onClick={() => setView("map")}><span>⌖</span><b>Live map</b></button>
+          <button className={view === "people" ? "active" : ""} onClick={() => setView("people")}><span>◌</span><b>Conversations</b>{people.length > 0 && <i>{people.length}</i>}</button>
+          <button className={view === "traffic" ? "active" : ""} onClick={() => setView("traffic")}><span>↕</span><b>Traffic</b></button>
         </nav>
-        <div className={`connection-pill ${connected ? "online" : ""}`}><i />{connected ? "Gateway online" : "Gateway offline"}</div>
-        <button className={`connect-button ${connected ? "disconnect" : ""}`} onClick={connected ? disconnect : connectSerial} disabled={connecting}>{connecting ? "Choose port…" : connected ? "Disconnect" : "Connect ESP32"}</button>
+        <div className="header-actions">
+          <div className={`connection-pill ${connected ? "online" : ""}`}><i /><span><small>LOCAL GATEWAY</small>{connected ? "Online" : "Offline"}</span></div>
+          <button className={`connect-button ${connected ? "disconnect" : ""}`} onClick={connected ? disconnect : connectSerial} disabled={connecting}>{connecting ? "Choose port…" : connected ? "Disconnect" : "Connect ESP32"}<span>→</span></button>
+        </div>
       </header>
 
       <section className="command-bar">
-        <div><p>OPERATIONS / MASTER GATEWAY</p><h1>{view === "map" ? "Field overview" : view === "people" ? "Survivor conversations" : "Gateway traffic"}</h1><span>{view === "map" ? "Live positions for the command node and checked-in survivors." : view === "people" ? "One private conversation for every person who checks in." : "Raw USB activity for diagnostics and radio verification."}</span></div>
-        <div className="quick-stats glass"><div><strong>{wifiUsers}</strong><small>Wi-Fi users</small></div><div><strong>{people.length}</strong><small>Checked in</small></div><div className={unreadCritical ? "danger" : ""}><strong>{unreadCritical}</strong><small>Critical</small></div></div>
+        <div className="command-copy"><p><i /> LIVE RESPONSE COORDINATION <span>/ MASTER GATEWAY</span></p><h1>{view === "map" ? "Field intelligence" : view === "people" ? "Survivor communications" : "Gateway diagnostics"}</h1><span>{view === "map" ? "A single operational picture for every node, person and rescue signal." : view === "people" ? "Private, direct communication with every person connected to the mesh." : "Real-time USB and LoRa packet visibility for mission-critical verification."}</span></div>
+        <div className="quick-stats glass"><div><i>⌁</i><span><strong>{wifiUsers}</strong><small>Wi-Fi users</small></span></div><div><i>◎</i><span><strong>{people.length}</strong><small>Checked in</small></span></div><div className={unreadCritical ? "danger" : ""}><i>!</i><span><strong>{unreadCritical}</strong><small>Critical</small></span></div></div>
       </section>
 
       {view === "map" && <section className="map-dashboard">
