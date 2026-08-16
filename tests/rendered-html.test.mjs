@@ -43,4 +43,9 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /selectedMessages/);
   assert.match(page, /locationKind: "approximate"/);
   assert.match(page, /Mapped near master · approximate/);
+  const map = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/CommandMap.tsx", import.meta.url), "utf8"));
+  assert.match(map, /maps\.googleapis\.com\/maps\/api\/js/);
+  assert.match(map, /#e5484d/);
+  assert.match(map, /#13aa7d/);
+  assert.doesNotMatch(map, /leaflet|openstreetmap/i);
 });

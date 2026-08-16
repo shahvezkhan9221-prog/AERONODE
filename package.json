@@ -14,9 +14,7 @@
     "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
-    "@types/leaflet": "^1.9.22",
     "drizzle-orm": "0.45.2",
-    "leaflet": "^1.9.4",
     "react": "19.2.6",
     "react-dom": "19.2.6"
   },
