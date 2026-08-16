@@ -24,7 +24,7 @@ type NodeUnit = {
   lat?: number;
   lng?: number;
 };
-type LogItem = { id: number; at: string; type: "RX" | "TX" | "INFO" | "ERROR"; text: string };
+type LogItem = { id: number; at: string; type: "RX" | "TX" | "INFO" | "ERROR"; text: string; bytes: number };
 type SerialPortLike = {
   readable: ReadableStream<Uint8Array>;
   writable: WritableStream<Uint8Array>;
@@ -43,8 +43,9 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [reply, setReply] = useState("");
+  const [target, setTarget] = useState("BROADCAST");
   const [logs, setLogs] = useState<LogItem[]>([
-    { id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin." },
+    { id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin.", bytes: 0 },
   ]);
   const portRef = useRef<SerialPortLike | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
@@ -56,7 +57,7 @@ export default function Home() {
   const locatedNodes = useMemo(() => nodes.filter((node) => Number.isFinite(node.lat) && Number.isFinite(node.lng)), [nodes]);
 
   const addLog = useCallback((type: LogItem["type"], text: string) => {
-    setLogs((current) => [...current.slice(-19), { id: Date.now() + Math.random(), at: timeNow(), type, text }]);
+    setLogs((current) => [...current.slice(-49), { id: Date.now() + Math.random(), at: timeNow(), type, text, bytes: new TextEncoder().encode(text).byteLength }]);
   }, []);
 
   const upsertSignal = useCallback((next: Signal) => {
@@ -69,6 +70,7 @@ export default function Home() {
   const applyLine = useCallback((line: string) => {
     const text = line.trim();
     if (!text) return;
+    addLog("RX", text);
 
     let packet: Record<string, unknown> | null = null;
     try {
@@ -92,7 +94,6 @@ export default function Home() {
         setNodes((current) => current.some((node) => node.id === nodeId)
           ? current.map((node) => node.id === nodeId ? { ...node, ...next } : node)
           : [next, ...current]);
-        addLog("RX", `${nodeId} telemetry received`);
         return;
       }
 
@@ -110,11 +111,9 @@ export default function Home() {
           receivedAt: timeNow(),
         };
         upsertSignal(next);
-        addLog("RX", `${nodeId} · ${next.message}`);
         return;
       }
 
-      addLog("RX", `${nodeId} · ${String(packet.message ?? type)}`);
       return;
     }
 
@@ -129,11 +128,8 @@ export default function Home() {
         receivedAt: timeNow(),
       };
       upsertSignal(next);
-      addLog("RX", next.message);
       return;
     }
-
-    if (/RSSI|SNR|LORA MESSAGE/i.test(text)) addLog("RX", text.replace(/=/g, "").trim());
   }, [addLog, upsertSignal]);
 
   const readSerial = useCallback(async (port: SerialPortLike) => {
@@ -199,16 +195,17 @@ export default function Home() {
     addLog("INFO", "ESP32 disconnected");
   };
 
-  const sendReply = async () => {
+  const sendMessage = async () => {
     const message = reply.trim();
-    if (!message || !selected || !portRef.current?.writable) return;
-    const payload = JSON.stringify({ type: "reply", to: selected.id, nodeId: selected.nodeId, message, ts: Date.now() });
+    if (!message || !portRef.current?.writable) return;
+    const destination = selected?.nodeId ?? target;
+    const payload = JSON.stringify({ type: selected ? "reply" : "command", to: selected?.id ?? destination, nodeId: destination, message, ts: Date.now() });
     try {
       const writer = portRef.current.writable.getWriter();
       await writer.write(new TextEncoder().encode(`${payload}\n`));
       writer.releaseLock();
       setReply("");
-      addLog("TX", `${selected.id} · ${message}`);
+      addLog("TX", payload);
     } catch (error) { addLog("ERROR", `Send failed: ${(error as Error).message}`); }
   };
 
@@ -241,7 +238,7 @@ export default function Home() {
             <div className="card-heading"><div><small>INBOX</small><h2>Incoming signals</h2></div>{signals.length > 0 && <button onClick={() => { setSignals([]); setSelectedId(null); }}>Clear</button>}</div>
             <div className="signal-list">
               {signals.length === 0 ? <div className="empty-state"><span>◎</span><b>No signals yet</b><small>Messages received over Serial will appear here.</small></div> : signals.map((signal) => (
-                <button key={signal.id} className={`signal-item ${selectedId === signal.id ? "selected" : ""}`} onClick={() => setSelectedId(signal.id)}>
+                <button key={signal.id} className={`signal-item ${selectedId === signal.id ? "selected" : ""}`} onClick={() => { setSelectedId(signal.id); setTarget(signal.nodeId); }}>
                   <i className={signal.priority} /><div><b>{signal.name}</b><p>{signal.message}</p><small>{signal.nodeId} · {signal.receivedAt}{signal.lat !== undefined ? " · located" : ""}</small></div>
                 </button>
               ))}
@@ -249,14 +246,18 @@ export default function Home() {
           </section>
 
           <section className="reply-card glass">
-            {selected ? <><div className="reply-title"><div><small>REPLY TO</small><h3>{selected.name}</h3></div><span>{selected.nodeId}</span></div><p>{selected.message}</p><textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder={connected ? "Write a reply…" : "Connect the gateway to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send via LoRa <span>→</span></button></> : <div className="empty-state compact"><span>↗</span><b>Select a signal</b><small>Choose a message above to send a reply.</small></div>}
+            <div className="reply-title"><div><small>{selected ? "REPLY TO SIGNAL" : "SEND MESSAGE"}</small><h3>{selected?.name ?? "New LoRa message"}</h3></div>{selected && <button className="close-selection" onClick={() => setSelectedId(null)}>New message</button>}</div>
+            {selected && <p className="quoted-message">“{selected.message}”</p>}
+            <label className="target-field"><span>Destination</span><select value={selected?.nodeId ?? target} onChange={(event) => { setTarget(event.target.value); setSelectedId(null); }} disabled={Boolean(selected)}><option value="BROADCAST">All nodes · Broadcast</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label} · {node.id}</option>)}</select></label>
+            <textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder={connected ? "Type a message to send…" : "Connect the gateway to send"} disabled={!connected} />
+            <button onClick={sendMessage} disabled={!connected || !reply.trim()}>Send via USB → LoRa <span>→</span></button>
           </section>
         </aside>
       </section>
 
       <section className="activity glass">
-        <div className="activity-title"><div><i className={connected ? "active" : ""} /><b>Serial activity</b></div><span>115200 baud</span></div>
-        <div className="log-list">{logs.slice(-5).map((log) => <div key={log.id}><time>{log.at}</time><b className={log.type.toLowerCase()}>{log.type}</b><p>{log.text}</p></div>)}</div>
+        <div className="activity-title"><div><i className={connected ? "active" : ""} /><b>Live gateway traffic</b></div><span>USB ↔ LoRa · 115200 baud</span><small>Wi-Fi events appear when a field node reports them.</small></div>
+        <div className="traffic-side"><div className="traffic-actions"><span><i className="rx-dot" />Received</span><span><i className="tx-dot" />Sent</span><button onClick={() => setLogs([])}>Clear traffic</button></div><div className="log-list">{logs.slice(-10).map((log) => <div key={log.id}><time>{log.at}</time><b className={log.type.toLowerCase()}>{log.type}</b><em>{log.bytes > 0 ? `${log.bytes} B` : "—"}</em><p>{log.text}</p></div>)}</div></div>
       </section>
     </main>
   );

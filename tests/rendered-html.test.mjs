@@ -20,7 +20,9 @@ test("server-renders the Aero-Node command surface", async () => {
   assert.match(html, /Aero-Node Rescue Command/i);
   assert.match(html, /Connect ESP32/);
   assert.match(html, /LIVE MAP/);
-  assert.match(html, /Serial activity/);
+  assert.match(html, /Live gateway traffic/);
+  assert.match(html, /SEND MESSAGE/);
+  assert.match(html, /Send via USB → LoRa/);
   assert.match(html, /No signals yet/);
   assert.match(html, />0(?:<!-- -->)?<\/strong><small>Nodes/);
   assert.match(html, />0(?:<!-- -->)?<\/strong><small>Signals/);
@@ -33,6 +35,6 @@ test("ships the expected local-first protocol hooks", async () => {
   const page = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/page.tsx", import.meta.url), "utf8"));
   assert.match(page, /baudRate: 115200/);
   assert.match(page, /readable\.getReader\(\)/);
-  assert.match(page, /type: "reply"/);
+  assert.match(page, /selected \? "reply" : "command"/);
   assert.match(page, /\["sos", "message", "member", "user"\]/);
 });
