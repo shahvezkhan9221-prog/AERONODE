@@ -13,6 +13,7 @@ type SerialPortLike = { readable: ReadableStream<Uint8Array>; writable: Writable
 type SerialNavigator = Navigator & { serial?: { requestPort(): Promise<SerialPortLike> } };
 
 const timeNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const DEFAULT_MASTER_LOCATION = { lat: 28.462802, lng: 77.493290 };
 const numberOrUndefined = (value: unknown) => {
   if (value === undefined || value === null || value === "") return undefined;
   const number = Number(value);
@@ -69,25 +70,30 @@ export default function Home() {
       : [next, ...current]);
   }, []);
 
-  const setMasterLocation = useCallback((lat: number, lng: number, source: "browser" | "map") => {
+  const setMasterLocation = useCallback((lat: number, lng: number, source: "browser" | "map" | "fallback") => {
     setNodes((current) => {
       const existing = current.find((node) => node.id === "MASTER");
       const master: NodeUnit = { ...existing, id: "MASTER", label: "Master · Command laptop", online: true, clients: existing?.clients ?? 0, lat, lng };
       return existing ? current.map((node) => node.id === "MASTER" ? master : node) : [master, ...current];
     });
     setLocationState("located");
-    addLog("INFO", `Command laptop ${source === "browser" ? "located" : "placed on map"} · ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+    const description = source === "browser" ? "located" : source === "map" ? "placed on map" : "set to fallback location";
+    addLog("INFO", `Command laptop ${description} · ${lat.toFixed(5)}, ${lng.toFixed(5)}`);
   }, [addLog]);
 
   const locateMaster = useCallback(() => {
-    if (!navigator.geolocation) { setLocationState("manual"); addLog("ERROR", "Laptop location provider unavailable. Click the map to place the master."); return; }
+    if (!navigator.geolocation) {
+      setMasterLocation(DEFAULT_MASTER_LOCATION.lat, DEFAULT_MASTER_LOCATION.lng, "fallback");
+      addLog("INFO", "Laptop location is unavailable. Using the configured command-center fallback.");
+      return;
+    }
     setLocationState("locating");
     let settled = false;
     const fallback = window.setTimeout(() => {
       if (settled) return;
       settled = true;
-      setLocationState("manual");
-      addLog("ERROR", "Laptop location timed out. Click the map to place the master.");
+      setMasterLocation(DEFAULT_MASTER_LOCATION.lat, DEFAULT_MASTER_LOCATION.lng, "fallback");
+      addLog("INFO", "Laptop location timed out. Using the configured command-center fallback.");
     }, 12000);
     navigator.geolocation.getCurrentPosition(({ coords }) => {
       if (settled) return;
@@ -98,8 +104,8 @@ export default function Home() {
       if (settled) return;
       settled = true;
       window.clearTimeout(fallback);
-      setLocationState("manual");
-      addLog("ERROR", `Laptop location unavailable: ${error.message}. Click the map to place the master.`);
+      setMasterLocation(DEFAULT_MASTER_LOCATION.lat, DEFAULT_MASTER_LOCATION.lng, "fallback");
+      addLog("INFO", `Laptop location unavailable (${error.message}). Using the configured command-center fallback.`);
     }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 });
   }, [addLog, setMasterLocation]);
 
@@ -195,7 +201,15 @@ export default function Home() {
     addLog("INFO", "ESP32 disconnected");
   };
 
-  const openConversation = (id: string) => { if (!id.startsWith("UNREGISTERED")) { setSelectedId(id); setView("people"); } };
+  const openConversation = useCallback((id: string) => {
+    if (!id.startsWith("UNREGISTERED")) {
+      setSelectedId(id);
+      setView("people");
+    }
+  }, []);
+  const pickMasterLocation = useCallback(({ lat, lng }: { lat: number; lng: number }) => {
+    setMasterLocation(lat, lng, "map");
+  }, [setMasterLocation]);
   const sendReply = async () => {
     const message = reply.trim().replace(/\s*\n+\s*/g, " ");
     if (!message || !selected || !portRef.current?.writable) return;
@@ -231,7 +245,7 @@ export default function Home() {
       </section>
 
       {view === "map" && <section className="map-dashboard">
-        <section className="map-card glass"><div className="card-heading"><div><small>LIVE OPERATIONS MAP</small><h2>People and nodes</h2></div><div className="map-actions"><span>{locatedNodes.length + mappedPeople.length} mapped</span><button className={locationState === "manual" ? "manual" : ""} onClick={locationState === "locating" || locationState === "manual" ? () => setLocationState("manual") : locateMaster}>{locationState === "located" ? "↻ Re-locate laptop" : locationState === "locating" ? "Use map instead" : locationState === "manual" ? "Click map to place master" : "Use laptop location"}</button></div></div><div className="map-wrap"><CommandMap nodes={locatedNodes} people={mappedPeople} selectedId={selectedId ?? ""} onSelect={openConversation} pickingLocation={locationState === "manual"} onPickLocation={({ lat, lng }) => setMasterLocation(lat, lng, "map")} />{locatedNodes.length + mappedPeople.length === 0 && locationState !== "manual" && <div className="map-empty glass"><Empty icon="⌖" title="No locations received" text={locationState === "locating" ? "Waiting for the laptop location provider…" : "Connect the gateway and allow laptop location."} /></div>}</div><p className="map-caption"><b>Location confidence:</b> checked-in users with shared GPS are exact. Connected devices without GPS are placed approximately near the master.</p></section>
+        <section className="map-card glass"><div className="card-heading"><div><small>LIVE OPERATIONS MAP</small><h2>People and nodes</h2></div><div className="map-actions"><span>{locatedNodes.length + mappedPeople.length} mapped</span><button className={locationState === "manual" ? "manual" : ""} onClick={locationState === "locating" || locationState === "manual" ? () => setLocationState("manual") : locateMaster}>{locationState === "located" ? "↻ Re-locate laptop" : locationState === "locating" ? "Use map instead" : locationState === "manual" ? "Click map to place master" : "Use laptop location"}</button></div></div><div className="map-wrap"><CommandMap nodes={locatedNodes} people={mappedPeople} selectedId={selectedId ?? ""} onSelect={openConversation} pickingLocation={locationState === "manual"} onPickLocation={pickMasterLocation} />{locatedNodes.length + mappedPeople.length === 0 && locationState !== "manual" && <div className="map-empty glass"><Empty icon="⌖" title="No locations received" text={locationState === "locating" ? "Waiting for the laptop location provider…" : "Connect the gateway and allow laptop location."} /></div>}</div><p className="map-caption"><b>Location confidence:</b> checked-in users with shared GPS are exact. Connected devices without GPS use green approximate markers near the master. If laptop location is denied, the master defaults to 28.462802, 77.493290.</p></section>
         <aside className="roster-card glass"><div className="card-heading"><div><small>PEOPLE IN RANGE</small><h2>Recent check-ins</h2></div><span className="count-pill">{people.length}</span></div><div className="roster-list">{people.length === 0 ? <Empty icon="◌" title="No one checked in" text="A person appears here after opening the rescue portal." /> : people.map((person) => <button key={person.id} className="roster-person" onClick={() => openConversation(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "Connected to rescue portal"}</p><small>{person.lat !== undefined ? "Exact GPS shared" : "Mapped near master · approximate"} · {person.lastSeen}</small></div><span>→</span></button>)}</div>{placeholderCount > 0 && <div className="pending-devices"><span>⌁</span><div><b>{placeholderCount} connected {placeholderCount === 1 ? "device" : "devices"} not checked in</b><small>Ask them to open 192.168.4.1</small></div></div>}</aside>
       </section>}
 
