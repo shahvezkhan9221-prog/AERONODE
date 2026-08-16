@@ -43,7 +43,6 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [reply, setReply] = useState("");
-  const [target, setTarget] = useState("BROADCAST");
   const [logs, setLogs] = useState<LogItem[]>([
     { id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin.", bytes: 0 },
   ]);
@@ -196,16 +195,14 @@ export default function Home() {
   };
 
   const sendMessage = async () => {
-    const message = reply.trim();
+    const message = reply.trim().replace(/\s*\n+\s*/g, " ");
     if (!message || !portRef.current?.writable) return;
-    const destination = selected?.nodeId ?? target;
-    const payload = JSON.stringify({ type: selected ? "reply" : "command", to: selected?.id ?? destination, nodeId: destination, message, ts: Date.now() });
     try {
       const writer = portRef.current.writable.getWriter();
-      await writer.write(new TextEncoder().encode(`${payload}\n`));
+      await writer.write(new TextEncoder().encode(`${message}\n`));
       writer.releaseLock();
       setReply("");
-      addLog("TX", payload);
+      addLog("TX", message);
     } catch (error) { addLog("ERROR", `Send failed: ${(error as Error).message}`); }
   };
 
@@ -238,7 +235,7 @@ export default function Home() {
             <div className="card-heading"><div><small>INBOX</small><h2>Incoming signals</h2></div>{signals.length > 0 && <button onClick={() => { setSignals([]); setSelectedId(null); }}>Clear</button>}</div>
             <div className="signal-list">
               {signals.length === 0 ? <div className="empty-state"><span>◎</span><b>No signals yet</b><small>Messages received over Serial will appear here.</small></div> : signals.map((signal) => (
-                <button key={signal.id} className={`signal-item ${selectedId === signal.id ? "selected" : ""}`} onClick={() => { setSelectedId(signal.id); setTarget(signal.nodeId); }}>
+                <button key={signal.id} className={`signal-item ${selectedId === signal.id ? "selected" : ""}`} onClick={() => setSelectedId(signal.id)}>
                   <i className={signal.priority} /><div><b>{signal.name}</b><p>{signal.message}</p><small>{signal.nodeId} · {signal.receivedAt}{signal.lat !== undefined ? " · located" : ""}</small></div>
                 </button>
               ))}
@@ -248,9 +245,10 @@ export default function Home() {
           <section className="reply-card glass">
             <div className="reply-title"><div><small>{selected ? "REPLY TO SIGNAL" : "SEND MESSAGE"}</small><h3>{selected?.name ?? "New LoRa message"}</h3></div>{selected && <button className="close-selection" onClick={() => setSelectedId(null)}>New message</button>}</div>
             {selected && <p className="quoted-message">“{selected.message}”</p>}
-            <label className="target-field"><span>Destination</span><select value={selected?.nodeId ?? target} onChange={(event) => { setTarget(event.target.value); setSelectedId(null); }} disabled={Boolean(selected)}><option value="BROADCAST">All nodes · Broadcast</option>{nodes.map((node) => <option key={node.id} value={node.id}>{node.label} · {node.id}</option>)}</select></label>
-            <textarea value={reply} onChange={(event) => setReply(event.target.value)} placeholder={connected ? "Type a message to send…" : "Connect the gateway to send"} disabled={!connected} />
-            <button onClick={sendMessage} disabled={!connected || !reply.trim()}>Send via USB → LoRa <span>→</span></button>
+            <div className="broadcast-note"><span>⌁</span><div><b>Broadcast to connected phones</b><small>Plain-text mode for your current ESP firmware</small></div></div>
+            <textarea value={reply} maxLength={180} onChange={(event) => setReply(event.target.value)} placeholder={connected ? "Type a message to show on the phones…" : "Connect the gateway to send"} disabled={!connected} />
+            <div className="message-limit">{reply.length}/180 characters</div>
+            <button onClick={sendMessage} disabled={!connected || !reply.trim()}>Broadcast to phones <span>→</span></button>
           </section>
         </aside>
       </section>
