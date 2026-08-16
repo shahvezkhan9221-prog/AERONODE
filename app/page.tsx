@@ -44,7 +44,7 @@ export default function Home() {
   const [connecting, setConnecting] = useState(false);
   const [reply, setReply] = useState("");
   const [logs, setLogs] = useState<LogItem[]>([
-    { id: 1, at: timeNow(), type: "INFO", text: "Ready. Connect the ESP32 gateway to begin." },
+    { id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin." },
   ]);
   const portRef = useRef<SerialPortLike | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
