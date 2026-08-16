@@ -228,6 +228,12 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(79, 124, 
 .chat-row small { display: block; margin-bottom: 6px; font-size: 8px; font-weight: 800; opacity: .68; }
 .chat-row p { margin: 0; font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
 .chat-row time { display: block; margin-top: 7px; font-size: 8px; text-align: right; opacity: .55; }
+.chat-row.voice > div { min-width: min(360px,78%); border-color: #d8e8ff; background: linear-gradient(145deg,#f9fcff,#edf4ff); }
+.voice-bubble { display: flex; align-items: center; gap: 12px; }
+.voice-bubble > span { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 auto; border-radius: 13px; color: #fff; background: linear-gradient(145deg,#3a76f2,#18a988); box-shadow: 0 8px 20px rgba(36,112,183,.2); font-size: 12px; }
+.voice-bubble > div { min-width: 0; flex: 1; }
+.voice-bubble b { display: block; margin-bottom: 8px; color: #29405f; font-size: 10px; }
+.voice-bubble audio { display: block; width: 100%; height: 34px; accent-color: #2672e7; }
 .composer { position: relative; display: grid; grid-template-columns: 1fr auto; padding: 16px 20px; gap: 9px; border-top: 1px solid var(--line); background: rgba(255,255,255,.86); }
 .composer textarea { height: 68px; resize: none; padding: 13px; border: 1px solid #dfe6f1; border-radius: 14px; outline: 0; background: #f9fbfe; font-size: 11px; }
 .composer textarea:focus { border-color: #8aabff; background: #fff; box-shadow: 0 0 0 4px rgba(61,111,245,.08); }
@@ -321,6 +327,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(79, 124, 
   .chat-head > button { padding: 0 8px; }
   .message-window { min-height: 340px; padding: 16px; }
   .chat-row > div { max-width: 88%; }
+  .chat-row.voice > div { width: 100%; min-width: 0; max-width: 100%; }
   .composer { grid-template-columns: 1fr; padding: 13px; }
   .composer button { min-height: 42px; }
   .traffic-panel { min-height: 650px; padding: 14px; }
