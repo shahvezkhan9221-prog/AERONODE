@@ -20,6 +20,8 @@ test("server-renders the Aero-Node command surface", async () => {
   assert.match(html, /Aero-Node Rescue Command/i);
   assert.match(html, /Connect ESP32/);
   assert.match(html, /LIVE MAP/);
+  assert.match(html, /Use laptop location/);
+  assert.match(html, /Wi-Fi users/);
   assert.match(html, /Live gateway traffic/);
   assert.match(html, /SEND MESSAGE/);
   assert.match(html, /Broadcast to phones/);
@@ -36,6 +38,8 @@ test("ships the expected local-first protocol hooks", async () => {
   const page = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/page.tsx", import.meta.url), "utf8"));
   assert.match(page, /baudRate: 115200/);
   assert.match(page, /readable\.getReader\(\)/);
+  assert.match(page, /navigator\.geolocation\.getCurrentPosition/);
+  assert.match(page, /packet\.clients/);
   assert.match(page, /encode\(`\$\{message\}\\n`\)/);
   assert.match(page, /\["sos", "message", "member", "user"\]/);
 });

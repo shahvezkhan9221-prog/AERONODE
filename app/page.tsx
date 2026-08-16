@@ -23,6 +23,7 @@ type NodeUnit = {
   rssi?: number;
   lat?: number;
   lng?: number;
+  clients?: number;
 };
 type LogItem = { id: number; at: string; type: "RX" | "TX" | "INFO" | "ERROR"; text: string; bytes: number };
 type SerialPortLike = {
@@ -42,6 +43,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [locationState, setLocationState] = useState<"idle" | "locating" | "located" | "denied">("idle");
   const [reply, setReply] = useState("");
   const [logs, setLogs] = useState<LogItem[]>([
     { id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin.", bytes: 0 },
@@ -54,10 +56,59 @@ export default function Home() {
   const selected = signals.find((signal) => signal.id === selectedId) ?? null;
   const locatedSignals = useMemo(() => signals.filter((signal) => Number.isFinite(signal.lat) && Number.isFinite(signal.lng)), [signals]);
   const locatedNodes = useMemo(() => nodes.filter((node) => Number.isFinite(node.lat) && Number.isFinite(node.lng)), [nodes]);
+  const wifiUsers = useMemo(() => nodes.reduce((total, node) => total + (node.clients ?? 0), 0), [nodes]);
+  const wifiClientMarkers = useMemo<Signal[]>(() => nodes.flatMap((node) => {
+    const count = node.clients ?? 0;
+    if (!Number.isFinite(node.lat) || !Number.isFinite(node.lng) || count < 1) return [];
+    return Array.from({ length: count }, (_, index) => {
+      const angle = (index / count) * Math.PI * 2;
+      const radius = 0.00015;
+      return {
+        id: `${node.id}-WIFI-${index + 1}`,
+        name: `Connected phone ${index + 1}`,
+        nodeId: node.id,
+        message: "Connected to the Aero-Node Wi-Fi · approximate position",
+        priority: "normal" as const,
+        receivedAt: "online",
+        lat: (node.lat as number) + Math.cos(angle) * radius,
+        lng: (node.lng as number) + Math.sin(angle) * radius,
+      };
+    });
+  }), [nodes]);
+  const mappedPeople = useMemo(() => [...locatedSignals, ...wifiClientMarkers], [locatedSignals, wifiClientMarkers]);
 
   const addLog = useCallback((type: LogItem["type"], text: string) => {
     setLogs((current) => [...current.slice(-49), { id: Date.now() + Math.random(), at: timeNow(), type, text, bytes: new TextEncoder().encode(text).byteLength }]);
   }, []);
+
+  const locateMaster = useCallback(() => {
+    if (!navigator.geolocation) {
+      setLocationState("denied");
+      addLog("ERROR", "Laptop location is not supported by this browser.");
+      return;
+    }
+    setLocationState("locating");
+    navigator.geolocation.getCurrentPosition(({ coords }) => {
+      setNodes((current) => {
+        const existing = current.find((node) => node.id === "MASTER");
+        const master: NodeUnit = {
+          ...existing,
+          id: "MASTER",
+          label: "Master · This laptop",
+          online: true,
+          clients: existing?.clients ?? 0,
+          lat: coords.latitude,
+          lng: coords.longitude,
+        };
+        return existing ? current.map((node) => node.id === "MASTER" ? master : node) : [master, ...current];
+      });
+      setLocationState("located");
+      addLog("INFO", `Laptop location acquired · ${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`);
+    }, (error) => {
+      setLocationState("denied");
+      addLog("ERROR", `Laptop location unavailable: ${error.message}`);
+    }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 });
+  }, [addLog]);
 
   const upsertSignal = useCallback((next: Signal) => {
     setSignals((current) => current.some((item) => item.id === next.id)
@@ -89,9 +140,18 @@ export default function Home() {
           lng: numberOrUndefined(packet.lng ?? packet.lon),
           battery: numberOrUndefined(packet.battery),
           rssi: numberOrUndefined(packet.rssi),
+          clients: numberOrUndefined(packet.clients),
         };
         setNodes((current) => current.some((node) => node.id === nodeId)
-          ? current.map((node) => node.id === nodeId ? { ...node, ...next } : node)
+          ? current.map((node) => node.id === nodeId ? {
+            ...node,
+            ...next,
+            lat: next.lat ?? node.lat,
+            lng: next.lng ?? node.lng,
+            battery: next.battery ?? node.battery,
+            rssi: next.rssi ?? node.rssi,
+            clients: next.clients ?? node.clients,
+          } : node)
           : [next, ...current]);
         return;
       }
@@ -173,6 +233,7 @@ export default function Home() {
       setConnected(true);
       setConnecting(false);
       addLog("INFO", "ESP32 connected at 115200 baud");
+      locateMaster();
       const task = readSerial(port);
       readTaskRef.current = task;
       void task.finally(() => { readTaskRef.current = null; });
@@ -218,16 +279,17 @@ export default function Home() {
 
       <section className="hero-row">
         <div><p>LIVE MESH</p><h1>Rescue signals, clearly.</h1><span>Connect your gateway and incoming nodes, people, messages and locations appear here automatically.</span></div>
-        <div className="quick-stats glass"><div><strong>{nodes.length}</strong><small>Nodes</small></div><div><strong>{signals.length}</strong><small>Signals</small></div><div><strong>{signals.filter((signal) => signal.priority === "critical").length}</strong><small>Critical</small></div></div>
+        <div className="quick-stats glass"><div><strong>{nodes.length}</strong><small>Nodes</small></div><div><strong>{wifiUsers}</strong><small>Wi-Fi users</small></div><div><strong>{signals.length}</strong><small>Signals</small></div></div>
       </section>
 
       <section className="dashboard-grid">
         <section className="map-card glass">
-          <div className="card-heading"><div><small>LIVE MAP</small><h2>Located devices</h2></div><span>{locatedNodes.length + locatedSignals.length} mapped</span></div>
+          <div className="card-heading"><div><small>LIVE MAP</small><h2>Master &amp; connected people</h2></div><div className="map-actions"><span>{locatedNodes.length + mappedPeople.length} mapped</span><button onClick={locateMaster} disabled={locationState === "locating"}>{locationState === "located" ? "✓ Laptop located" : locationState === "locating" ? "Locating…" : "Use laptop location"}</button></div></div>
           <div className="map-wrap">
-            <CommandMap nodes={locatedNodes} people={locatedSignals} selectedId={selectedId ?? ""} onSelect={setSelectedId} />
-            {locatedNodes.length + locatedSignals.length === 0 && <div className="map-empty glass"><span>⌖</span><b>Waiting for a location</b><small>Send a JSON packet with lat and lng from your node.</small></div>}
+            <CommandMap nodes={locatedNodes} people={mappedPeople} selectedId={selectedId ?? ""} onSelect={setSelectedId} />
+            {locatedNodes.length + mappedPeople.length === 0 && <div className="map-empty glass"><span>⌖</span><b>Waiting for a location</b><small>Allow laptop location to place the master node.</small></div>}
           </div>
+          <p className="map-caption">Phones connected to AERO-NODE are shown near the master. Their positions are approximate until a phone sends its own GPS coordinates.</p>
         </section>
 
         <aside className="side-stack">
