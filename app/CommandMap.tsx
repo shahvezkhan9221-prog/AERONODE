@@ -5,9 +5,10 @@ import { useEffect, useRef, useState } from "react";
 type MapNode = { id: string; label: string; lat?: number; lng?: number; online: boolean; rssi?: number; battery?: number };
 type MapPerson = { id: string; name: string; nodeId: string; lat?: number; lng?: number; priority: "critical" | "normal"; locationKind?: "exact" | "approximate" };
 type Position = { lat: number; lng: number };
+type MapMouseEvent = { latLng?: { lat(): number; lng(): number } };
 type Listener = { remove(): void };
 type Bounds = { extend(position: Position): void };
-type MapInstance = { fitBounds(bounds: Bounds, padding?: number): void; setCenter(position: Position): void; setZoom(zoom: number): void };
+type MapInstance = { fitBounds(bounds: Bounds, padding?: number): void; setCenter(position: Position): void; setZoom(zoom: number): void; setOptions(options: Record<string, unknown>): void; addListener(event: string, handler: (event: MapMouseEvent) => void): Listener };
 type MarkerInstance = { setMap(map: MapInstance | null): void; addListener(event: string, handler: () => void): Listener };
 type InfoWindowInstance = { setContent(content: Node): void; open(options: { anchor: MarkerInstance; map: MapInstance }): void; close(): void };
 type GoogleMaps = {
@@ -119,7 +120,7 @@ function detailCard(title: string, eyebrow: string, rows: Array<[string, string]
   return card;
 }
 
-export default function CommandMap({ nodes, people, selectedId, onSelect }: { nodes: MapNode[]; people: MapPerson[]; selectedId: string; onSelect: (id: string) => void }) {
+export default function CommandMap({ nodes, people, selectedId, onSelect, pickingLocation, onPickLocation }: { nodes: MapNode[]; people: MapPerson[]; selectedId: string; onSelect: (id: string) => void; pickingLocation: boolean; onPickLocation: (position: Position) => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapInstance | null>(null);
   const mapsRef = useRef<GoogleMaps | null>(null);
@@ -153,6 +154,18 @@ export default function CommandMap({ nodes, people, selectedId, onSelect }: { no
     }).catch(() => { if (!cancelled) setStatus("error"); });
     return () => { cancelled = true; markersRef.current.forEach((marker) => marker.setMap(null)); markersRef.current = []; infoRef.current?.close(); };
   }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (status !== "ready" || !map) return;
+    map.setOptions({ draggableCursor: pickingLocation ? "crosshair" : null });
+    if (!pickingLocation) return;
+    const listener = map.addListener("click", (event) => {
+      if (!event.latLng) return;
+      onPickLocation({ lat: event.latLng.lat(), lng: event.latLng.lng() });
+    });
+    return () => listener.remove();
+  }, [onPickLocation, pickingLocation, status]);
 
   useEffect(() => {
     const maps = mapsRef.current;
@@ -203,5 +216,5 @@ export default function CommandMap({ nodes, people, selectedId, onSelect }: { no
     if (points.length > 1) map.fitBounds(bounds, 80);
   }, [nodes, people, selectedId, onSelect, status]);
 
-  return <div className="google-map-shell"><div ref={containerRef} className="map-canvas" aria-label="Google Map of live Aero-Node rescue locations" />{status === "loading" && <div className="map-provider-state">Loading Google Maps…</div>}{status === "error" && <div className="map-provider-state error"><b>Google Maps unavailable</b><span>Check the API key, billing and website restriction.</span></div>}<div className="map-legend"><span><i className="node-flag" />Nodes</span><span><i className="person-flag" />Survivors</span><span><i className="approx-flag" />Approximate</span></div></div>;
+  return <div className="google-map-shell"><div ref={containerRef} className="map-canvas" aria-label="Google Map of live Aero-Node rescue locations" />{status === "loading" && <div className="map-provider-state">Loading Google Maps…</div>}{status === "error" && <div className="map-provider-state error"><b>Google Maps unavailable</b><span>Check the API key, billing and website restriction.</span></div>}{pickingLocation && status === "ready" && <div className="map-pick-hint"><b>Place the master node</b><span>Click the command laptop’s position on the map</span></div>}<div className="map-legend"><span><i className="node-flag" />Nodes</span><span><i className="person-flag" />Survivors</span><span><i className="approx-flag" />Approximate</span></div></div>;
 }
