@@ -2,15 +2,13 @@
 
 import { useCallback, useMemo, useRef, useState } from "react";
 import CommandMap from "./CommandMap";
-import { base64ToBytes, createVoiceUrl, fnv1a32 } from "./voiceCodec";
 
 type Priority = "critical" | "normal";
 type View = "map" | "people" | "traffic";
 type Person = { id: string; name: string; nodeId: string; priority: Priority; lastMessage: string; lastSeen: string; lat?: number; lng?: number; online: boolean; locationKind?: "exact" | "approximate" };
-type ChatMessage = { id: string; userId: string; direction: "incoming" | "outgoing"; text: string; at: string; priority: Priority; kind?: "text" | "voice"; audioUrl?: string; durationMs?: number };
+type ChatMessage = { id: string; userId: string; direction: "incoming" | "outgoing"; text: string; at: string; priority: Priority };
 type NodeUnit = { id: string; label: string; online: boolean; battery?: number; rssi?: number; lat?: number; lng?: number; clients?: number };
 type LogItem = { id: number; at: string; type: "RX" | "TX" | "INFO" | "ERROR"; text: string; bytes: number };
-type VoiceAssembly = { messageId: string; userId: string; name: string; codec: string; sampleCount: number; totalBytes: number; checksum: number; chunks: Array<Uint8Array | undefined> };
 type SerialPortLike = { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array>; open(options: { baudRate: number }): Promise<void>; close(): Promise<void> };
 type SerialNavigator = Navigator & { serial?: { requestPort(): Promise<SerialPortLike> } };
 
@@ -37,7 +35,6 @@ export default function Home() {
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const readTaskRef = useRef<Promise<void> | null>(null);
   const keepReadingRef = useRef(false);
-  const voiceAssembliesRef = useRef<Map<string, VoiceAssembly>>(new Map());
 
   const selected = people.find((person) => person.id === selectedId) ?? null;
   const selectedMessages = useMemo(() => messages.filter((message) => message.userId === selectedId), [messages, selectedId]);
@@ -122,70 +119,6 @@ export default function Home() {
     if (packet) {
       const type = String(packet.type ?? "message").toLowerCase();
       const nodeId = String(packet.nodeId ?? packet.node_id ?? "MASTER");
-      if (type === "voice_begin") {
-        const messageId = String(packet.messageId ?? "");
-        const userId = String(packet.userId ?? "UNKNOWN");
-        const chunkCount = Number(packet.chunkCount ?? 0);
-        const sampleCount = Number(packet.sampleCount ?? 0);
-        const totalBytes = Number(packet.totalBytes ?? 0);
-        if (!messageId || !Number.isInteger(chunkCount) || chunkCount < 1 || chunkCount > 64 || sampleCount < 1 || totalBytes < 1 || totalBytes > 8192) {
-          addLog("ERROR", "Rejected invalid voice-note metadata");
-          return;
-        }
-        const name = String(packet.name ?? `Survivor ${userId.slice(-4)}`);
-        voiceAssembliesRef.current.set(messageId, {
-          messageId, userId, name,
-          codec: String(packet.codec ?? "cvsd-4k-v1"),
-          sampleCount, totalBytes,
-          checksum: Number(packet.checksum ?? 0) >>> 0,
-          chunks: Array.from({ length: chunkCount }),
-        });
-        upsertPerson({ id: userId, name, nodeId, priority: "normal", lastMessage: "Voice note receiving…", lastSeen: timeNow(), online: true });
-        return;
-      }
-      if (type === "voice_chunk") {
-        const messageId = String(packet.messageId ?? "");
-        const assembly = voiceAssembliesRef.current.get(messageId);
-        const index = Number(packet.index ?? -1);
-        if (!assembly || !Number.isInteger(index) || index < 0 || index >= assembly.chunks.length) return;
-        try { assembly.chunks[index] = base64ToBytes(String(packet.data ?? "")); }
-        catch { addLog("ERROR", `Voice chunk ${index} could not be decoded`); }
-        return;
-      }
-      if (type === "voice_end") {
-        const messageId = String(packet.messageId ?? "");
-        const assembly = voiceAssembliesRef.current.get(messageId);
-        if (!assembly) return;
-        if (assembly.chunks.some((chunk) => !chunk)) {
-          addLog("ERROR", `Voice note ${messageId} is incomplete`);
-          voiceAssembliesRef.current.delete(messageId);
-          return;
-        }
-        const bytes = new Uint8Array(assembly.totalBytes);
-        let offset = 0;
-        for (const chunk of assembly.chunks as Uint8Array[]) {
-          const copied = Math.min(chunk.length, Math.max(0, bytes.length - offset));
-          if (copied) bytes.set(chunk.subarray(0, copied), offset);
-          offset += copied;
-        }
-        if (offset < bytes.length || fnv1a32(bytes) !== assembly.checksum) {
-          addLog("ERROR", `Voice note ${messageId} failed its checksum`);
-          voiceAssembliesRef.current.delete(messageId);
-          return;
-        }
-        try {
-          const audioUrl = createVoiceUrl(bytes, assembly.sampleCount, assembly.codec);
-          const durationMs = Math.round(assembly.sampleCount / 4);
-          const at = timeNow();
-          const label = `Voice note · ${Math.max(1, Math.ceil(durationMs / 1000))} sec`;
-          setMessages((current) => [...current, { id: `VOICE-${messageId}`, userId: assembly.userId, direction: "incoming", text: label, at, priority: "normal", kind: "voice", audioUrl, durationMs }]);
-          upsertPerson({ id: assembly.userId, name: assembly.name, nodeId, priority: "normal", lastMessage: label, lastSeen: at, online: true });
-          setSelectedId(assembly.userId);
-          setView("people");
-        } catch (error) { addLog("ERROR", `Voice decode failed: ${(error as Error).message}`); }
-        voiceAssembliesRef.current.delete(messageId);
-        return;
-      }
       if (["telemetry", "node", "heartbeat"].includes(type)) {
         const next: NodeUnit = { id: nodeId, label: String(packet.label ?? nodeId), online: true, lat: numberOrUndefined(packet.lat), lng: numberOrUndefined(packet.lng ?? packet.lon), battery: numberOrUndefined(packet.battery), rssi: numberOrUndefined(packet.rssi), clients: numberOrUndefined(packet.clients) };
         setNodes((current) => current.some((node) => node.id === nodeId) ? current.map((node) => node.id === nodeId ? { ...node, ...next, lat: next.lat ?? node.lat, lng: next.lng ?? node.lng, battery: next.battery ?? node.battery, rssi: next.rssi ?? node.rssi, clients: next.clients ?? node.clients } : node) : [next, ...current]);
@@ -320,7 +253,7 @@ export default function Home() {
 
       {view === "people" && <section className="conversation-shell glass">
         <aside className="conversation-list"><div className="conversation-list-head"><small>ACTIVE PEOPLE</small><h2>Conversations</h2><p>Each phone has an independent thread.</p></div><div className="conversation-scroll">{people.length === 0 ? <Empty icon="◌" title="No conversations" text="Incoming messages create a separate person here." /> : people.map((person) => <button key={person.id} className={selectedId === person.id ? "selected" : ""} onClick={() => setSelectedId(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "New connection"}</p><small>{person.id} · {person.lastSeen}</small></div>{person.priority === "critical" && <i>!</i>}</button>)}</div></aside>
-        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "Exact GPS shared" : "Node-area location · approximate"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Messages and voice notes from this person will appear only in this thread." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction} ${message.kind === "voice" ? "voice" : ""}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small>{message.kind === "voice" && message.audioUrl ? <VoicePlayer label={message.text} url={message.audioUrl} /> : <p>{message.text}</p>}<time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={220} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/220 · sent only to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
+        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "Exact GPS shared" : "Node-area location · approximate"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Messages from this person will appear only in this thread." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small><p>{message.text}</p><time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={220} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/220 · sent only to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
       </section>}
 
       {view === "traffic" && <section className="traffic-panel glass"><header><div><small>SERIAL MONITOR</small><h2>Live gateway traffic</h2><p>USB ↔ ESP32 ↔ LoRa at 115200 baud</p></div><div className="traffic-legend"><span><i className="rx-dot" />Received</span><span><i className="tx-dot" />Sent</span><button onClick={() => setLogs([])}>Clear traffic</button></div></header><div className="traffic-table"><div className="traffic-row traffic-labels"><span>TIME</span><span>TYPE</span><span>SIZE</span><span>PACKET</span></div>{logs.length === 0 ? <Empty icon="↕" title="Traffic cleared" text="New serial packets will appear here." /> : logs.slice().reverse().map((log) => <div className="traffic-row" key={log.id}><time>{log.at}</time><b className={log.type.toLowerCase()}>{log.type}</b><em>{log.bytes > 0 ? `${log.bytes} B` : "—"}</em><p>{log.text}</p></div>)}</div></section>}
@@ -330,9 +263,3 @@ export default function Home() {
 
 function Avatar({ name, priority }: { name: string; priority: Priority }) { return <span className={`avatar ${priority}`}>{name.trim().charAt(0).toUpperCase() || "?"}</span>; }
 function Empty({ icon, title, text }: { icon: string; title: string; text: string }) { return <div className="empty-state"><span>{icon}</span><b>{title}</b><small>{text}</small></div>; }
-function VoicePlayer({ label, url }: { label: string; url: string }) {
-  return <div className="voice-bubble"><span>◉</span><div><b>{label}</b>{/* Voice notes do not have a spoken-word transcript at capture time. */}
-    {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-    <audio aria-label={label} controls preload="metadata" src={url}>Voice playback is unavailable in this browser.</audio>
-  </div></div>;
-}

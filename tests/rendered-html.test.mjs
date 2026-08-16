@@ -45,15 +45,6 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /Mapped near master · approximate/);
   assert.match(page, /Click map to place master/);
   assert.match(page, /enableHighAccuracy: false/);
-  assert.match(page, /type === "voice_begin"/);
-  assert.match(page, /type === "voice_chunk"/);
-  assert.match(page, /type === "voice_end"/);
-  assert.match(page, /createVoiceUrl/);
-  assert.match(page, /<audio[^>]+controls/);
-  const codec = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/voiceCodec.ts", import.meta.url), "utf8"));
-  assert.match(codec, /VOICE_CODEC = "cvsd-4k-v1"/);
-  assert.match(codec, /VOICE_SAMPLE_RATE = 4000/);
-  assert.match(codec, /fnv1a32/);
   const map = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/CommandMap.tsx", import.meta.url), "utf8"));
   assert.match(map, /maps\.googleapis\.com\/maps\/api\/js/);
   assert.match(map, /#e5484d/);
@@ -61,26 +52,4 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.doesNotMatch(map, /leaflet|openstreetmap/i);
   assert.match(map, /pickingLocation/);
   assert.match(map, /Place the master node/);
-});
-
-test("ships matching reliable voice firmware for field and gateway nodes", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const field = await readFile(new URL("../firmware/aero_node_field_voice.ino", import.meta.url), "utf8");
-  const gateway = await readFile(new URL("../firmware/aero_node_gateway_voice.ino", import.meta.url), "utf8");
-  for (const source of [field, gateway]) {
-    assert.match(source, /VOICE_MAGIC = 0xA7/);
-    assert.match(source, /VOICE_BEGIN = 0x30/);
-    assert.match(source, /VOICE_DATA = 0x31/);
-    assert.match(source, /VOICE_ACK = 0x32/);
-    assert.match(source, /VOICE_END = 0x33/);
-    assert.match(source, /LORA_FREQ 433E6/);
-  }
-  assert.match(field, /server\.on\("\/voice"/);
-  assert.match(field, /MAX_RETRIES = 4/);
-  assert.match(field, /type="file" accept="audio\/\*" capture/);
-  assert.match(field, /cvsd-4k-v1/);
-  assert.match(field, /messages\?userId=/);
-  assert.match(gateway, /base64Encode/);
-  assert.match(gateway, /voice_chunk/);
-  assert.match(gateway, /handleSerialCommand/);
 });
