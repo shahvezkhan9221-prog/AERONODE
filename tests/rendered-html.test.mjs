@@ -25,8 +25,8 @@ test("server-renders the Aero-Node command surface", async () => {
   assert.match(html, /Use laptop location/);
   assert.match(html, /Wi-Fi users/);
   assert.match(html, /Recent check-ins/);
-  assert.match(html, /ONE-BOARD DEMO/);
-  assert.match(html, /Wi-Fi \+ USB Serial/);
+  assert.match(html, /FIRMWARE CHECK/);
+  assert.match(html, /Waiting for firmware/);
   assert.match(html, /No one checked in/);
   assert.match(html, />0(?:<!-- -->)?<\/strong><small>Checked in/);
   assert.doesNotMatch(html, /Unknown survivor|Recon Team|AN-01 heartbeat/);
@@ -52,6 +52,7 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /Local Wi-Fi\/USB reply/);
   assert.match(page, /voice_chunk/);
   assert.match(page, /Decoding voice note/);
+  assert.match(page, /Voice note checksum verified/);
   const map = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/CommandMap.tsx", import.meta.url), "utf8"));
   assert.match(map, /maps\.googleapis\.com\/maps\/api\/js/);
   assert.match(map, /#e5484d/);
@@ -97,5 +98,7 @@ test("ships the one-ESP text and voice gateway", async () => {
   assert.match(firmware, /encodeVoiceWav/);
   assert.match(firmware, /mime:'audio\/wav'/);
   assert.match(firmware, /chunk\.replace\(" ", "\+"\)/);
+  assert.match(firmware, /voice-wav-v3/);
+  assert.match(firmware, /checksum:encoded\.checksum/);
   assert.doesNotMatch(firmware, /#include <LoRa\.h>|#include <esp_now\.h>|aero_network_secrets/);
 });

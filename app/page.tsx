@@ -31,6 +31,17 @@ const detectAudioMime = (bytes: Uint8Array, supplied: string) => {
   if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return "audio/webm";
   return supplied || "application/octet-stream";
 };
+const voiceChecksum = (bytes: Uint8Array) => {
+  let hash = 2166136261;
+  for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
+  return (hash >>> 0).toString(16);
+};
+const decodeVoicePayload = (payload: string) => {
+  let base64 = payload.replace(/-/g, "+").replace(/_/g, "/");
+  while (base64.length % 4) base64 += "=";
+  const binary = window.atob(base64);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+};
 
 export default function Home() {
   const [view, setView] = useState<View>("map");
@@ -41,6 +52,7 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [gatewayTransport, setGatewayTransport] = useState("Wi-Fi + USB Serial");
+  const [gatewayFirmware, setGatewayFirmware] = useState("Waiting for firmware");
   const [locationState, setLocationState] = useState<"idle" | "locating" | "located" | "manual">("idle");
   const [reply, setReply] = useState("");
   const [logs, setLogs] = useState<LogItem[]>([{ id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin.", bytes: 0 }]);
@@ -164,22 +176,45 @@ export default function Home() {
         window.setTimeout(() => {
           try {
             if (transfer.chunks.some((chunk) => !chunk)) throw new Error("Missing audio chunk");
-            const binary = window.atob(transfer.chunks.join(""));
-            const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+            const bytes = decodeVoicePayload(transfer.chunks.join(""));
             if (bytes.byteLength < 44) throw new Error("Audio payload is empty");
+            if (String(packet.checksum ?? "") !== voiceChecksum(bytes)) throw new Error("Voice checksum mismatch");
             const audioMime = detectAudioMime(bytes, transfer.mime);
+            if (audioMime === "audio/wav") {
+              const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+              if (String.fromCharCode(...bytes.slice(0, 4)) !== "RIFF" || String.fromCharCode(...bytes.slice(8, 12)) !== "WAVE" || 44 + view.getUint32(40, true) > bytes.byteLength) throw new Error("Invalid WAV payload");
+            }
             const audioUrl = URL.createObjectURL(new Blob([bytes], { type: audioMime }));
-            setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Voice note", audioUrl, status: "ready" } : message));
-            setPeople((current) => current.map((person) => person.id === transfer.userId ? { ...person, lastMessage: "🎙 Voice note", lastSeen: timeNow() } : person));
-            addLog("INFO", `Voice note decoded · ${packet.bytes ?? bytes.byteLength} bytes`);
-          } catch {
-            setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Voice note could not be decoded", status: "failed" } : message));
-            addLog("ERROR", "Voice note decoding failed because one or more chunks were missing.");
+            const probe = new Audio();
+            let settled = false;
+            const failed = () => {
+              if (settled) return;
+              settled = true;
+              URL.revokeObjectURL(audioUrl);
+              setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Voice playback validation failed", status: "failed", audioUrl: undefined } : message));
+              addLog("ERROR", "Voice bytes arrived, but the browser rejected the decoded audio.");
+            };
+            const timer = window.setTimeout(failed, 5000);
+            probe.onloadedmetadata = () => {
+              window.clearTimeout(timer);
+              if (!Number.isFinite(probe.duration) || probe.duration <= 0) { failed(); return; }
+              settled = true;
+              setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: `Voice note · ${probe.duration.toFixed(1)} sec`, audioUrl, status: "ready" } : message));
+              setPeople((current) => current.map((person) => person.id === transfer.userId ? { ...person, lastMessage: "🎙 Voice note", lastSeen: timeNow() } : person));
+              addLog("INFO", `Voice note checksum verified and decoded · ${bytes.byteLength} bytes`);
+            };
+            probe.onerror = () => { window.clearTimeout(timer); failed(); };
+            probe.src = audioUrl;
+            probe.load();
+          } catch (error) {
+            setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Voice transfer failed integrity check", status: "failed" } : message));
+            addLog("ERROR", `Voice note rejected: ${(error as Error).message}`);
           } finally { delete voiceTransfersRef.current[voiceId]; }
         }, 1600);
         return;
       }
-      if (["telemetry", "node", "heartbeat"].includes(type)) {
+      if (["telemetry", "node", "heartbeat", "gateway"].includes(type)) {
+        if (nodeId === "MASTER") setGatewayFirmware(String(packet.firmware ?? "Update ESP32 firmware"));
         const next: NodeUnit = { id: nodeId, label: String(packet.label ?? nodeId), online: true, lat: numberOrUndefined(packet.lat), lng: numberOrUndefined(packet.lng ?? packet.lon), battery: numberOrUndefined(packet.battery), rssi: numberOrUndefined(packet.rssi), clients: numberOrUndefined(packet.clients) };
         setNodes((current) => current.some((node) => node.id === nodeId) ? current.map((node) => node.id === nodeId ? { ...node, ...next, lat: next.lat ?? node.lat, lng: next.lng ?? node.lng, battery: next.battery ?? node.battery, rssi: next.rssi ?? node.rssi, clients: next.clients ?? node.clients } : node) : [next, ...current]);
         return;
@@ -242,6 +277,7 @@ export default function Home() {
       portRef.current = port;
       keepReadingRef.current = true;
       setGatewayTransport("Wi-Fi + USB Serial");
+      setGatewayFirmware("Waiting for firmware");
       setConnected(true);
       addLog("INFO", "ESP32 connected at 115200 baud");
       locateMaster();
@@ -260,6 +296,7 @@ export default function Home() {
     portRef.current = null;
     setConnected(false);
     setGatewayTransport("Wi-Fi + USB Serial");
+    setGatewayFirmware("Waiting for firmware");
     addLog("INFO", "ESP32 disconnected");
   };
 
@@ -298,7 +335,7 @@ export default function Home() {
           <button className={view === "traffic" ? "active" : ""} onClick={() => setView("traffic")}><span>↕</span><b>Traffic</b></button>
         </nav>
         <div className="header-actions">
-          <div className="security-pill verified"><i>◆</i><span><small>ONE-BOARD DEMO</small>{gatewayTransport}</span></div>
+          <div className={`security-pill ${gatewayFirmware === "voice-wav-v3" ? "verified" : ""}`}><i>◆</i><span><small>{gatewayFirmware === "voice-wav-v3" ? "VOICE FIRMWARE READY" : "FIRMWARE CHECK"}</small>{gatewayFirmware === "voice-wav-v3" ? gatewayTransport : gatewayFirmware}</span></div>
           <div className={`connection-pill ${connected ? "online" : ""}`}><i /><span><small>LOCAL GATEWAY</small>{connected ? "Online" : "Offline"}</span></div>
           <button className={`connect-button ${connected ? "disconnect" : ""}`} onClick={connected ? disconnect : connectSerial} disabled={connecting}>{connecting ? "Choose port…" : connected ? "Disconnect" : "Connect ESP32"}<span>→</span></button>
         </div>

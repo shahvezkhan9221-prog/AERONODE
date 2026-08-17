@@ -23,7 +23,7 @@ Enable the Google Maps JavaScript API and restrict the key to the deployed websi
 
 For the current one-board demo, flash [`firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino`](firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino). It needs only the ESP32 Arduino core—no Ra-02, ESP-NOW peer, encryption header or second board. It creates the `AERO-NODE` access point and rescue portal at `http://192.168.4.1`, assigns each phone a persistent user ID, reports check-ins and messages as JSON over Serial, and delivers command replies only to the addressed user.
 
-The phone portal accepts a short audio recording, decodes it on the phone, and converts the first five seconds to a universally playable mono 8 kHz WAV. It displays a minimum five-second encoding and transfer sequence, sends the real Base64 audio in 480-character chunks through the ESP32 and USB Serial, and the command dashboard displays receiving and decoding states before creating a playable audio message. This is a local one-board demonstration path, not a LoRa voice transfer.
+The phone portal accepts a short audio recording, decodes it on the phone, and converts the first five seconds to a universally playable mono 8 kHz WAV. It displays a minimum five-second encoding and transfer sequence, sends URL-safe Base64 in 480-character chunks through the ESP32 and USB Serial, and verifies an end-to-end FNV-1a checksum before creating a playable audio message. The dashboard header must show **VOICE FIRMWARE READY** after connecting; **Update ESP32 firmware** means an older sketch is still flashed. This is a local one-board demonstration path, not a LoRa voice transfer.
 
 ### One-board demo
 
