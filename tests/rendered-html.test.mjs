@@ -25,6 +25,8 @@ test("server-renders the Aero-Node command surface", async () => {
   assert.match(html, /Use laptop location/);
   assert.match(html, /Wi-Fi users/);
   assert.match(html, /Recent check-ins/);
+  assert.match(html, /LORA SECURITY/);
+  assert.match(html, /Awaiting gateway/);
   assert.match(html, /No one checked in/);
   assert.match(html, />0(?:<!-- -->)?<\/strong><small>Checked in/);
   assert.doesNotMatch(html, /Unknown survivor|Recon Team|AN-01 heartbeat/);
@@ -47,6 +49,8 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /exactly 5 metres from the red master flag/);
   assert.match(page, /Click map to place master/);
   assert.match(page, /enableHighAccuracy: false/);
+  assert.match(page, /packet\.secure === true/);
+  assert.match(page, /AES-256-GCM radio reply/);
   const map = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/CommandMap.tsx", import.meta.url), "utf8"));
   assert.match(map, /maps\.googleapis\.com\/maps\/api\/js/);
   assert.match(map, /#e5484d/);
@@ -54,4 +58,21 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.doesNotMatch(map, /leaflet|openstreetmap/i);
   assert.match(map, /pickingLocation/);
   assert.match(map, /Place the master node/);
+});
+
+test("ships authenticated LoRa encryption without committing a network key", async () => {
+  const { readFile, access } = await import("node:fs/promises");
+  const crypto = await readFile(new URL("../firmware/AeroCrypto.h", import.meta.url), "utf8");
+  const firmware = await readFile(new URL("../firmware/aero_node_master_private_chat_gps.ino", import.meta.url), "utf8");
+  const peer = await readFile(new URL("../firmware/secure_peer_example/secure_peer_example.ino", import.meta.url), "utf8");
+  const ignore = await readFile(new URL("../.gitignore", import.meta.url), "utf8");
+  assert.match(crypto, /mbedtls_gcm_crypt_and_tag/);
+  assert.match(crypto, /mbedtls_gcm_auth_decrypt/);
+  assert.match(crypto, /putULong64\("next-tx"/);
+  assert.match(crypto, /ReplayRejected/);
+  assert.match(firmware, /sendEncryptedRadio/);
+  assert.match(firmware, /AES-256-GCM/);
+  assert.match(peer, /AeroCrypto radioCrypto/);
+  assert.match(ignore, /aero_network_secrets\.h/);
+  await assert.rejects(access(new URL("../firmware/aero_network_secrets.h", import.meta.url)));
 });

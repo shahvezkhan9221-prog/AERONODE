@@ -21,6 +21,7 @@
 # misc
 .DS_Store
 *.pem
+**/aero_network_secrets.h
 
 # debug
 npm-debug.log*

@@ -3,6 +3,8 @@
 #include <DNSServer.h>
 #include <SPI.h>
 #include <LoRa.h>
+#include "aero_network_secrets.h"
+#include "AeroCrypto.h"
 
 // Aero-Node master gateway: per-phone identity, private chats and GPS packets.
 // ESP32 AP address: http://192.168.4.1
@@ -20,6 +22,8 @@ DNSServer dnsServer;
 #define LORA_MOSI 23
 #define LORA_FREQ 433E6
 
+AeroCrypto radioCrypto(AERO_NETWORK_KEY, AERO_NODE_ID);
+
 const int MAX_MESSAGES = 40;
 String messageSender[MAX_MESSAGES];
 String messageRecipient[MAX_MESSAGES];
@@ -36,6 +40,20 @@ String jsonEscape(String value) {
   value.replace("\n", "\\n");
   value.replace("\r", "");
   return value;
+}
+
+bool sendEncryptedRadio(const String& plaintext) {
+  uint8_t frame[255];
+  size_t frameLength = 0;
+  if (!radioCrypto.encrypt(
+        reinterpret_cast<const uint8_t*>(plaintext.c_str()), plaintext.length(),
+        frame, sizeof(frame), frameLength)) {
+    Serial.println("{\"type\":\"error\",\"message\":\"Encrypted LoRa packet is too large or crypto is unavailable\"}");
+    return false;
+  }
+  LoRa.beginPacket();
+  LoRa.write(frame, frameLength);
+  return LoRa.endPacket() == 1;
 }
 
 String jsonField(const String& json, const String& key) {
@@ -96,7 +114,7 @@ void reportWifiClients() {
   if (clients == lastWifiClientCount && now - lastWifiReportMs < WIFI_REPORT_INTERVAL_MS) return;
   lastWifiClientCount = clients;
   lastWifiReportMs = now;
-  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Laptop Gateway\",\"clients\":");
+  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Laptop Gateway\",\"encryption\":\"AES-256-GCM\",\"secure\":true,\"clients\":");
   Serial.print(clients);
   Serial.println("}");
 }
@@ -116,7 +134,7 @@ input,textarea{width:100%;border:1px solid #dce5f1;background:#f9fbff;border-rad
 <section class="hero"><small>OFF-GRID SURVIVAL NETWORK</small><h1>You are connected.<br>Help can hear you.</h1><p>Share your name and location, then keep this page open to message the rescue command privately.</p></section>
 <section class="profile glass"><div class="title"><b>Your rescue identity</b><span id="identity"></span></div><div class="profile-grid"><input id="name" maxlength="32" placeholder="Your name or identifying detail"><button onclick="saveProfile()">Save</button></div><button id="locationButton" class="location" onclick="requestLocation()">⌖ Try to share exact GPS</button><small id="locationHelp" class="location-help">You are already mapped near this Aero-Node. Exact GPS is added only when your browser permits it.</small></section>
 <section class="chat glass"><div class="title"><b>Private command chat</b><span>Only your conversation</span></div><div id="chat"></div><div class="compose"><textarea id="message" maxlength="160" placeholder="Describe your condition, injuries or surroundings..."></textarea><button class="send" onclick="sendMessage('normal')">Send</button></div><button class="sos" onclick="sendMessage('critical')">Send critical SOS</button></section>
-<p class="note">Stay connected to AERO-NODE. Internet is not required. Messages are relayed through the rescue radio network.</p>
+  <p class="note">Stay connected to AERO-NODE. Internet is not required. The LoRa radio hop is encrypted and authenticated with AES-256-GCM; this local emergency Wi-Fi portal remains an open HTTP network.</p>
 </main><script>
 let userId=localStorage.getItem('aeroUserId');if(!userId){userId='USR-'+Math.random().toString(36).slice(2,10).toUpperCase();localStorage.setItem('aeroUserId',userId)}
 let survivorName=localStorage.getItem('aeroName')||('Survivor '+userId.slice(-4));let latitude=localStorage.getItem('aeroLat')||'';let longitude=localStorage.getItem('aeroLng')||'';
@@ -148,11 +166,10 @@ void handleSend() {
   message.trim();
   if (!userId.length() || !message.length()) { server.send(400, "text/plain", "Missing message"); return; }
   if (priority != "critical") priority = "normal";
+  String radioPayload = "USER|" + userId + "|" + name + "|" + message;
+  if (!sendEncryptedRadio(radioPayload)) { server.send(503, "text/plain", "Secure radio send failed"); return; }
   addMessage("PHONE", userId, message);
   printPersonPacket(priority == "critical" ? "sos" : "message", userId, name, message, server.arg("lat"), server.arg("lng"), priority);
-  LoRa.beginPacket();
-  LoRa.print("USER|"); LoRa.print(userId); LoRa.print("|"); LoRa.print(name); LoRa.print("|"); LoRa.print(message);
-  LoRa.endPacket();
   server.send(200, "text/plain", "OK");
 }
 
@@ -178,14 +195,14 @@ void handleSerialCommand(String line) {
     String recipient = jsonField(line, "to");
     String message = jsonField(line, "message");
     if (type == "command" && recipient.length() && message.length()) {
+      if (!sendEncryptedRadio("CMD|" + recipient + "|" + message)) return;
       addMessage("MASTER", recipient, message);
-      LoRa.beginPacket(); LoRa.print("CMD|"); LoRa.print(recipient); LoRa.print("|"); LoRa.print(message); LoRa.endPacket();
       Serial.print("{\"type\":\"sent\",\"to\":\""); Serial.print(jsonEscape(recipient)); Serial.print("\",\"message\":\""); Serial.print(jsonEscape(message)); Serial.println("\"}");
       return;
     }
   }
+  if (!sendEncryptedRadio("MASTER:" + line)) return;
   addMessage("MASTER", "BROADCAST", line);
-  LoRa.beginPacket(); LoRa.print("MASTER:"); LoRa.print(line); LoRa.endPacket();
 }
 
 void setup() {
@@ -195,6 +212,11 @@ void setup() {
   WiFi.softAP(WIFI_NAME);
   IPAddress apIP = WiFi.softAPIP();
   dnsServer.start(DNS_PORT, "*", apIP);
+
+  if (!radioCrypto.begin()) {
+    Serial.println("CRYPTO START FAILED: generate aero_network_secrets.h and use a unique non-zero node ID");
+    while (true) delay(1000);
+  }
 
   SPI.begin(LORA_SCK, LORA_MISO, LORA_MOSI, LORA_SS);
   LoRa.setPins(LORA_SS, LORA_RST, LORA_DIO0);
@@ -220,6 +242,7 @@ void setup() {
   server.onNotFound(handleHome);
   server.begin();
   Serial.println("Aero-Node ready at http://192.168.4.1");
+  Serial.println("{\"type\":\"security\",\"encryption\":\"AES-256-GCM\",\"secure\":true}");
 }
 
 void loop() {
@@ -229,10 +252,23 @@ void loop() {
 
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
-    String message = "";
-    while (LoRa.available()) message += (char)LoRa.read();
-    addMessage("RELAY", "BROADCAST", message);
-    Serial.print("RELAY: "); Serial.println(message);
+    uint8_t frame[255];
+    size_t frameLength = 0;
+    while (LoRa.available() && frameLength < sizeof(frame)) frame[frameLength++] = LoRa.read();
+    uint8_t plaintext[AeroCrypto::kMaxPlaintextBytes + 1];
+    size_t plaintextLength = 0;
+    AeroDecryptResult result = radioCrypto.decrypt(frame, frameLength, plaintext, sizeof(plaintext), plaintextLength);
+    if (result == AeroDecryptResult::Ok) {
+      String message = reinterpret_cast<const char*>(plaintext);
+      addMessage("RELAY", "BROADCAST", message);
+      Serial.print("RELAY: "); Serial.println(message);
+    } else if (result == AeroDecryptResult::AuthenticationFailed) {
+      Serial.println("{\"type\":\"error\",\"message\":\"Rejected LoRa packet: authentication failed\"}");
+    } else if (result == AeroDecryptResult::ReplayRejected) {
+      Serial.println("{\"type\":\"error\",\"message\":\"Rejected LoRa packet: replay detected\"}");
+    } else {
+      Serial.println("{\"type\":\"error\",\"message\":\"Rejected invalid encrypted LoRa packet\"}");
+    }
   }
 
   if (Serial.available()) handleSerialCommand(Serial.readStringUntil('\n'));

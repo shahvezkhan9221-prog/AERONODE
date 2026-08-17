@@ -30,6 +30,8 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [radioSecurity, setRadioSecurity] = useState("Awaiting gateway");
+  const [securityVerified, setSecurityVerified] = useState(false);
   const [locationState, setLocationState] = useState<"idle" | "locating" | "located" | "manual">("idle");
   const [reply, setReply] = useState("");
   const [logs, setLogs] = useState<LogItem[]>([{ id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin.", bytes: 0 }]);
@@ -124,6 +126,12 @@ export default function Home() {
     if (packet) {
       const type = String(packet.type ?? "message").toLowerCase();
       const nodeId = String(packet.nodeId ?? packet.node_id ?? "MASTER");
+      const encryption = String(packet.encryption ?? "");
+      if (encryption) {
+        setRadioSecurity(encryption);
+        setSecurityVerified(packet.secure === true);
+      }
+      if (type === "security") return;
       if (["telemetry", "node", "heartbeat"].includes(type)) {
         const next: NodeUnit = { id: nodeId, label: String(packet.label ?? nodeId), online: true, lat: numberOrUndefined(packet.lat), lng: numberOrUndefined(packet.lng ?? packet.lon), battery: numberOrUndefined(packet.battery), rssi: numberOrUndefined(packet.rssi), clients: numberOrUndefined(packet.clients) };
         setNodes((current) => current.some((node) => node.id === nodeId) ? current.map((node) => node.id === nodeId ? { ...node, ...next, lat: next.lat ?? node.lat, lng: next.lng ?? node.lng, battery: next.battery ?? node.battery, rssi: next.rssi ?? node.rssi, clients: next.clients ?? node.clients } : node) : [next, ...current]);
@@ -186,6 +194,8 @@ export default function Home() {
       await port.open({ baudRate: 115200 });
       portRef.current = port;
       keepReadingRef.current = true;
+      setRadioSecurity("Awaiting gateway");
+      setSecurityVerified(false);
       setConnected(true);
       addLog("INFO", "ESP32 connected at 115200 baud");
       locateMaster();
@@ -203,6 +213,8 @@ export default function Home() {
     try { await portRef.current?.close(); } catch { setConnected(false); }
     portRef.current = null;
     setConnected(false);
+    setRadioSecurity("Awaiting gateway");
+    setSecurityVerified(false);
     addLog("INFO", "ESP32 disconnected");
   };
 
@@ -241,6 +253,7 @@ export default function Home() {
           <button className={view === "traffic" ? "active" : ""} onClick={() => setView("traffic")}><span>↕</span><b>Traffic</b></button>
         </nav>
         <div className="header-actions">
+          <div className={`security-pill ${securityVerified ? "verified" : ""}`}><i>◆</i><span><small>LORA SECURITY</small>{radioSecurity}</span></div>
           <div className={`connection-pill ${connected ? "online" : ""}`}><i /><span><small>LOCAL GATEWAY</small>{connected ? "Online" : "Offline"}</span></div>
           <button className={`connect-button ${connected ? "disconnect" : ""}`} onClick={connected ? disconnect : connectSerial} disabled={connecting}>{connecting ? "Choose port…" : connected ? "Disconnect" : "Connect ESP32"}<span>→</span></button>
         </div>
@@ -258,7 +271,7 @@ export default function Home() {
 
       {view === "people" && <section className="conversation-shell glass">
         <aside className="conversation-list"><div className="conversation-list-head"><small>ACTIVE PEOPLE</small><h2>Conversations</h2><p>Each phone has an independent thread.</p></div><div className="conversation-scroll">{people.length === 0 ? <Empty icon="◌" title="No conversations" text="Incoming messages create a separate person here." /> : people.map((person) => <button key={person.id} className={selectedId === person.id ? "selected" : ""} onClick={() => setSelectedId(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "New connection"}</p><small>{person.id} · {person.lastSeen}</small></div>{person.priority === "critical" && <i>!</i>}</button>)}</div></aside>
-        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "Exact GPS shared" : "Node-area location · approximate"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Messages from this person will appear only in this thread." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small><p>{message.text}</p><time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={220} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/220 · sent only to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
+        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "Exact GPS shared" : "Node-area location · approximate"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Messages from this person will appear only in this thread." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small><p>{message.text}</p><time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={180} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/180 · AES-256-GCM radio reply to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
       </section>}
 
       {view === "traffic" && <section className="traffic-panel glass"><header><div><small>SERIAL MONITOR</small><h2>Live gateway traffic</h2><p>USB ↔ ESP32 ↔ LoRa at 115200 baud</p></div><div className="traffic-legend"><span><i className="rx-dot" />Received</span><span><i className="tx-dot" />Sent</span><button onClick={() => setLogs([])}>Clear traffic</button></div></header><div className="traffic-table"><div className="traffic-row traffic-labels"><span>TIME</span><span>TYPE</span><span>SIZE</span><span>PACKET</span></div>{logs.length === 0 ? <Empty icon="↕" title="Traffic cleared" text="New serial packets will appear here." /> : logs.slice().reverse().map((log) => <div className="traffic-row" key={log.id}><time>{log.at}</time><b className={log.type.toLowerCase()}>{log.type}</b><em>{log.bytes > 0 ? `${log.bytes} B` : "—"}</em><p>{log.text}</p></div>)}</div></section>}

@@ -112,6 +112,12 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(79, 124, 
 .connection-pill small { margin-bottom: 2px; color: #63758e; font-size: 7px; font-weight: 850; letter-spacing: .1em; }
 .connection-pill.online { color: #8df1d7; background: rgba(24,185,155,.1); }
 .connection-pill.online > i { background: #23d6ae; box-shadow: 0 0 0 5px rgba(35,214,174,.12), 0 0 16px rgba(35,214,174,.58); animation: statusPulse 2s ease-out infinite; }
+.security-pill { display: flex; align-items: center; gap: 8px; padding: 8px 11px; border: 1px solid rgba(255,255,255,.07); border-radius: 13px; color: #8798af; background: rgba(255,255,255,.04); white-space: nowrap; }
+.security-pill > i { color: #71839a; font-size: 9px; font-style: normal; }
+.security-pill > span { display: flex; flex-direction: column; font-size: 10px; font-weight: 750; }
+.security-pill small { margin-bottom: 2px; color: #63758e; font-size: 7px; font-weight: 850; letter-spacing: .1em; }
+.security-pill.verified { border-color: rgba(35,214,174,.2); color: #8df1d7; background: rgba(24,185,155,.09); }
+.security-pill.verified > i { color: #23d6ae; text-shadow: 0 0 12px rgba(35,214,174,.8); }
 .connect-button { display: flex; align-items: center; justify-content: center; height: 46px; padding: 0 16px; gap: 12px; border: 1px solid rgba(255,255,255,.14); border-radius: 14px; color: #fff; background: linear-gradient(135deg, #537fff, #2d5adf); box-shadow: 0 12px 26px rgba(40,87,218,.3), inset 0 1px 0 rgba(255,255,255,.2); font-size: 11px; font-weight: 780; white-space: nowrap; transition: transform .18s ease, box-shadow .18s ease; }
 .connect-button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 15px 32px rgba(40,87,218,.38); }
 .connect-button > span { font-size: 15px; }
@@ -266,7 +272,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(79, 124, 
 
 @media (max-width: 1100px) {
   .logo { min-width: 190px; }
-  .connection-pill { display: none; }
+  .connection-pill, .security-pill { display: none; }
   .quick-stats { min-width: 380px; }
   .map-dashboard { grid-template-columns: minmax(0,1fr) 330px; }
 }

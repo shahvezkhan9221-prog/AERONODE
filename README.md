@@ -23,6 +23,40 @@ Enable the Google Maps JavaScript API and restrict the key to the deployed websi
 
 Flash [`firmware/aero_node_master_private_chat_gps.ino`](firmware/aero_node_master_private_chat_gps.ino) to the ESP32 master gateway. It creates the `AERO-NODE` access point and rescue portal at `http://192.168.4.1`, assigns each phone a persistent user ID, reports check-ins and messages as JSON over Serial, and delivers command replies only to the addressed user.
 
+## LoRa encryption and decryption
+
+The radio hop uses **AES-256-GCM authenticated encryption** through the Mbed TLS implementation included with the ESP32 Arduino core. Encryption hides the LoRa payload. The 128-bit GCM authentication tag makes altered packets fail decryption instead of being accepted as rescue data.
+
+Each encrypted frame contains:
+
+```text
+AN | version | flags | unique node ID | persistent packet counter |
+ciphertext length | ciphertext | 128-bit authentication tag
+```
+
+The unique node ID plus persistent 64-bit counter forms the 96-bit GCM nonce. Each boot reserves one million counters in ESP32 NVS, preventing normal reboots from repeating a nonce. The receiver tracks the highest counter seen from recent nodes and rejects duplicates during that boot. The unencrypted header is authenticated as GCM additional authenticated data, so changing its sender, counter or length also invalidates the packet.
+
+### Generate and install keys
+
+From the project directory, run this once:
+
+```bash
+node tools/generate-aero-secrets.mjs
+```
+
+It creates two ignored files containing the same random 256-bit key and different random node IDs:
+
+- `firmware/aero_network_secrets.h` for the master sketch.
+- `firmware/secure_peer_example/aero_network_secrets.h` for the matching peer sketch.
+
+These secret files are excluded by `.gitignore`. Never paste the key into the dashboard, Serial Monitor, screenshots or GitHub. For another field node, copy a generated secret header so it keeps the same key, then assign that device a new unique non-zero `AERO_NODE_ID`.
+
+Flash the master sketch and [`firmware/secure_peer_example/secure_peer_example.ino`](firmware/secure_peer_example/secure_peer_example.ino) to two ESP32/Ra-02 devices for a bench test. Both radios must use the same frequency and LoRa settings. Text entered into the peer Serial Monitor is encrypted before transmission; the master decrypts it only after its authentication tag and replay counter pass validation.
+
+If you erase the ESP32 flash/NVS, rotate the network key before sending again because the persistent transmit counter also resets. For a production deployment, use per-node keys or a proper provisioning system, store keys in protected hardware, and persist receiver replay state. A shared network key means one captured node can expose the rest of that mesh.
+
+AES-GCM is standardized by [NIST SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final). The implementation calls `mbedtls_gcm_crypt_and_tag()` for encryption and `mbedtls_gcm_auth_decrypt()` for authenticated decryption.
+
 ## Serial protocol
 
 The dashboard accepts newline-delimited JSON. A field node can transmit an SOS packet through LoRa, and the master can print the packet unchanged with `Serial.println(message)`:
@@ -45,7 +79,7 @@ Replies are written back to USB as one JSON line:
 {"type":"command","to":"USR-ABC12345","message":"Rescue team is en route."}
 ```
 
-The supplied firmware stores the reply for only that user and forwards a compact targeted command over LoRa.
+The supplied firmware stores the reply for only that user and forwards a compact targeted command inside the authenticated encrypted LoRa envelope. The dashboard receives plaintext JSON only after the ESP32 gateway has successfully decrypted and authenticated the radio packet.
 
 ## Important deployment notes
 
@@ -53,8 +87,9 @@ The supplied firmware stores the reply for only that user and forwards a compact
 - Google Maps requires internet access on the command laptop. Serial communication, private chat and LoRa continue locally if map imagery is unavailable.
 - Browser geolocation can fail on desktop Linux even when permission is allowed. The dashboard automatically offers click-to-place mode for the master node.
 - Phone geolocation normally requires HTTPS. The HTTP captive portal therefore falls back to a clearly marked approximate node-area position when exact GPS is unavailable.
-- LoRa CRC detects corruption; it does not authenticate or encrypt packets. Add application-layer encryption, message authentication, per-node keys, and replay protection before field deployment.
-- The ESP access point in the supplied prototype firmware is open. Use device provisioning and a protected rescue workflow before treating the network as production-secure.
+- LoRa CRC still detects accidental radio corruption. AES-256-GCM adds confidentiality and cryptographic authentication at the application layer, while the packet counter provides prototype replay protection.
+- Encryption covers the **LoRa hop only**. The ESP access point and local captive portal remain open HTTP so an unknown survivor can connect without a password. Nearby Wi-Fi users could observe that local hop; use WPA2/provisioning or an end-to-end application protocol when that threat matters.
+- The live dashboard is public by design. It keeps received data only in the current browser session, but anyone with physical access to the command laptop or its open dashboard can view that session.
 
 ## Checks
 
