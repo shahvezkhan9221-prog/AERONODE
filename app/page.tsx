@@ -335,7 +335,7 @@ export default function Home() {
           <button className={view === "traffic" ? "active" : ""} onClick={() => setView("traffic")}><span>↕</span><b>Traffic</b></button>
         </nav>
         <div className="header-actions">
-          <div className={`security-pill ${gatewayFirmware === "voice-wav-v3" ? "verified" : ""}`}><i>◆</i><span><small>{gatewayFirmware === "voice-wav-v3" ? "VOICE FIRMWARE READY" : "FIRMWARE CHECK"}</small>{gatewayFirmware === "voice-wav-v3" ? gatewayTransport : gatewayFirmware}</span></div>
+          <div className={`security-pill ${gatewayFirmware === "voice-fallback-v4" ? "verified" : ""}`}><i>◆</i><span><small>{gatewayFirmware === "voice-fallback-v4" ? "VOICE V4 READY" : "FIRMWARE CHECK"}</small>{gatewayFirmware === "voice-fallback-v4" ? gatewayTransport : gatewayFirmware}</span></div>
           <div className={`connection-pill ${connected ? "online" : ""}`}><i /><span><small>LOCAL GATEWAY</small>{connected ? "Online" : "Offline"}</span></div>
           <button className={`connect-button ${connected ? "disconnect" : ""}`} onClick={connected ? disconnect : connectSerial} disabled={connecting}>{connecting ? "Choose port…" : connected ? "Disconnect" : "Connect ESP32"}<span>→</span></button>
         </div>

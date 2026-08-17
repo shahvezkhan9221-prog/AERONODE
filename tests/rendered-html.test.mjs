@@ -98,7 +98,9 @@ test("ships the one-ESP text and voice gateway", async () => {
   assert.match(firmware, /encodeVoiceWav/);
   assert.match(firmware, /mime:'audio\/wav'/);
   assert.match(firmware, /chunk\.replace\(" ", "\+"\)/);
-  assert.match(firmware, /voice-wav-v3/);
+  assert.match(firmware, /voice-fallback-v4/);
   assert.match(firmware, /checksum:encoded\.checksum/);
+  assert.match(firmware, /packRawVoice/);
+  assert.match(firmware, /text\/html; charset=utf-8/);
   assert.doesNotMatch(firmware, /#include <LoRa\.h>|#include <esp_now\.h>|aero_network_secrets/);
 });

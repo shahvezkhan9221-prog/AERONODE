@@ -79,7 +79,7 @@ void reportWifiClients() {
   if (clients == lastWifiClientCount && now - lastWifiReportMs < 2000) return;
   lastWifiClientCount = clients;
   lastWifiReportMs = now;
-  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"voice-wav-v3\",\"clients\":");
+  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"voice-fallback-v4\",\"clients\":");
   Serial.print(clients); Serial.println("}");
 }
 
@@ -110,12 +110,14 @@ async function sendMessage(priority){const input=document.getElementById('messag
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}let lastJson='';async function loadMessages(){try{const r=await fetch('/messages?userId='+encodeURIComponent(userId)),data=await r.json(),json=JSON.stringify(data);if(json===lastJson)return;lastJson=json;const chat=document.getElementById('chat');chat.innerHTML='';data.forEach(m=>chat.innerHTML+='<div class="msg '+(m.sender==='PHONE'?'mine':'')+'"><small>'+(m.sender==='PHONE'?'YOU':'RESCUE COMMAND')+'</small>'+esc(m.message)+'</div>');chat.scrollTop=chat.scrollHeight}catch(e){}}
 function setVoice(state,percent){document.getElementById('voiceProgress').className='progress show';document.getElementById('voiceState').textContent=state;document.getElementById('voicePercent').textContent=percent+'%';document.getElementById('voiceBar').style.width=percent+'%'}
 async function encodeVoiceWav(file){const AudioEngine=window.AudioContext||window.webkitAudioContext;if(!AudioEngine)throw new Error('Audio conversion unavailable');const context=new AudioEngine(),source=await context.decodeAudioData(await file.arrayBuffer()),rate=8000,duration=Math.min(source.duration,5),count=Math.max(1,Math.floor(duration*rate)),wav=new Uint8Array(44+count),view=new DataView(wav.buffer);function word(offset,text){for(let i=0;i<text.length;i++)wav[offset+i]=text.charCodeAt(i)}word(0,'RIFF');view.setUint32(4,36+count,true);word(8,'WAVE');word(12,'fmt ');view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,rate,true);view.setUint32(28,rate,true);view.setUint16(32,1,true);view.setUint16(34,8,true);word(36,'data');view.setUint32(40,count,true);const channels=[];for(let c=0;c<source.numberOfChannels;c++)channels.push(source.getChannelData(c));for(let i=0;i<count;i++){const at=Math.min(source.length-1,Math.floor(i*source.sampleRate/rate));let sample=0;for(let c=0;c<channels.length;c++)sample+=channels[c][at];sample=Math.max(-1,Math.min(1,sample/channels.length));wav[44+i]=Math.max(0,Math.min(255,Math.round((sample+1)*127.5)))}await context.close();let binary='',hash=2166136261;for(let i=0;i<wav.length;i++){hash=Math.imul(hash^wav[i],16777619);if(i%8192===8191||i===wav.length-1){const start=i-i%8192;binary+=String.fromCharCode.apply(null,wav.subarray(start,i+1))}}const data=btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');return{data,bytes:wav.length,checksum:(hash>>>0).toString(16)}}
-document.getElementById('voiceFile').addEventListener('change',async e=>{const file=e.target.files[0],button=document.getElementById('recordButton');if(!file)return;if(!file.size||file.size>4000000){setVoice('Choose a valid short audio recording',0);e.target.value='';return}button.disabled=true;const started=Date.now();try{setVoice('Encoding to 8 kHz rescue voice…',12);const encoded=await encodeVoiceWav(file),data=encoded.data;await wait(900);setVoice('Voice WAV encoded · preparing transfer',28);const chunkSize=480,total=Math.ceil(data.length/chunkSize),voiceId='VOICE-'+Date.now().toString(36).toUpperCase();for(let i=0;i<total;i++){const response=await post('/voice',{voiceId,userId,name:survivorName,mime:'audio/wav',index:String(i),total:String(total),chunk:data.slice(i*chunkSize,(i+1)*chunkSize)});if(!response.ok)throw new Error('Gateway rejected audio chunk');setVoice('Sending through Aero-Node gateway…',28+Math.round((i+1)/total*62))}await post('/voice-complete',{voiceId,userId,name:survivorName,mime:'audio/wav',bytes:String(encoded.bytes),chunks:String(total),checksum:encoded.checksum});const remaining=5000-(Date.now()-started);if(remaining>0)await wait(remaining);setVoice('✓ Voice note sent and verified',100);loadMessages()}catch(error){setVoice('Audio transfer failed — reconnect and try again',0)}finally{button.disabled=false;e.target.value=''}});
+async function packRawVoice(file){const raw=new Uint8Array(await file.arrayBuffer());if(raw.length>120000)throw new Error('Recording is too large');let binary='',hash=2166136261;for(let i=0;i<raw.length;i++){hash=Math.imul(hash^raw[i],16777619);if(i%8192===8191||i===raw.length-1){const start=i-i%8192;binary+=String.fromCharCode.apply(null,raw.subarray(start,i+1))}}return{data:btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),bytes:raw.length,checksum:(hash>>>0).toString(16),mime:file.type||'audio/mp4',mode:'original phone audio'}}
+async function encodeVoice(file){try{const wav=await encodeVoiceWav(file);return{...wav,mime:'audio/wav',mode:'8 kHz rescue WAV'}}catch(error){return packRawVoice(file)}}
+document.getElementById('voiceFile').addEventListener('change',async e=>{const file=e.target.files[0],button=document.getElementById('recordButton');if(!file)return;if(!file.size||file.size>4000000){setVoice('Choose a valid short audio recording',0);e.target.value='';return}button.disabled=true;const started=Date.now();try{setVoice('Preparing voice note…',12);const encoded=await encodeVoice(file),data=encoded.data;await wait(500);setVoice(encoded.mode+' · preparing transfer',28);const chunkSize=480,total=Math.ceil(data.length/chunkSize),voiceId='VOICE-'+Date.now().toString(36).toUpperCase();for(let i=0;i<total;i++){const response=await post('/voice',{voiceId,userId,name:survivorName,mime:encoded.mime,index:String(i),total:String(total),chunk:data.slice(i*chunkSize,(i+1)*chunkSize)});if(!response.ok)throw new Error('Gateway rejected audio chunk');setVoice('Sending through Aero-Node gateway…',28+Math.round((i+1)/total*62))}await post('/voice-complete',{voiceId,userId,name:survivorName,mime:encoded.mime,bytes:String(encoded.bytes),chunks:String(total),checksum:encoded.checksum});const remaining=5000-(Date.now()-started);if(remaining>0)await wait(remaining);setVoice('Voice note sent and verified',100);loadMessages()}catch(error){setVoice(error.message||'Audio transfer failed — reconnect and try again',0)}finally{button.disabled=false;e.target.value=''}});
 register();setInterval(loadMessages,900);loadMessages();
 </script></body></html>
 )rawliteral";
 
-void handleHome() { server.send_P(200, "text/html", RESCUE_PAGE); }
+void handleHome() { server.send_P(200, "text/html; charset=utf-8", RESCUE_PAGE); }
 
 void handleRegister() {
   String userId = server.arg("userId");
@@ -175,7 +177,7 @@ void handleMessages() {
     json += "{\"sender\":\"" + jsonEscape(messageSender[i]) + "\",\"message\":\"" + jsonEscape(messageText[i]) + "\"}";
   }
   json += "]";
-  server.send(200, "application/json", json);
+  server.send(200, "application/json; charset=utf-8", json);
 }
 
 void handleSerialCommand(String line) {
@@ -214,7 +216,7 @@ void setup() {
   server.on("/ncsi.txt", HTTP_GET, handleHome);
   server.onNotFound(handleHome);
   server.begin();
-  Serial.println("{\"type\":\"gateway\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"voice-wav-v3\",\"status\":\"ready\"}");
+  Serial.println("{\"type\":\"gateway\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"voice-fallback-v4\",\"status\":\"ready\"}");
   Serial.println("Aero-Node ready at http://192.168.4.1");
 }
 
