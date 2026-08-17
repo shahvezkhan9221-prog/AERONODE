@@ -25,8 +25,8 @@ test("server-renders the Aero-Node command surface", async () => {
   assert.match(html, /Use laptop location/);
   assert.match(html, /Wi-Fi users/);
   assert.match(html, /Recent check-ins/);
-  assert.match(html, /Awaiting gateway/);
-  assert.match(html, /HYBRID NETWORK/);
+  assert.match(html, /ONE-BOARD DEMO/);
+  assert.match(html, /Wi-Fi \+ USB Serial/);
   assert.match(html, /No one checked in/);
   assert.match(html, />0(?:<!-- -->)?<\/strong><small>Checked in/);
   assert.doesNotMatch(html, /Unknown survivor|Recon Team|AN-01 heartbeat/);
@@ -49,9 +49,9 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /exactly 5 metres from the red master flag/);
   assert.match(page, /Click map to place master/);
   assert.match(page, /enableHighAccuracy: false/);
-  assert.match(page, /packet\.secure === true/);
-  assert.match(page, /AES-256-GCM radio reply/);
-  assert.match(page, /LoRa \+ ESP-NOW/);
+  assert.match(page, /Local Wi-Fi\/USB reply/);
+  assert.match(page, /voice_chunk/);
+  assert.match(page, /Decoding voice note/);
   const map = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/CommandMap.tsx", import.meta.url), "utf8"));
   assert.match(map, /maps\.googleapis\.com\/maps\/api\/js/);
   assert.match(map, /#e5484d/);
@@ -84,4 +84,15 @@ test("ships authenticated LoRa encryption without committing a network key", asy
   assert.match(relay, /ReplayRejected|result != AeroDecryptResult::Ok/);
   assert.match(ignore, /aero_network_secrets\.h/);
   await assert.rejects(access(new URL("../firmware/aero_network_secrets.h", import.meta.url)));
+});
+
+test("ships the one-ESP text and voice gateway", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const firmware = await readFile(new URL("../firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino", import.meta.url), "utf8");
+  assert.match(firmware, /WiFi\.softAP\(WIFI_NAME\)/);
+  assert.match(firmware, /server\.on\("\/voice"/);
+  assert.match(firmware, /voice_chunk/);
+  assert.match(firmware, /voice-complete/);
+  assert.match(firmware, /5000-\(Date\.now\(\)-started\)/);
+  assert.doesNotMatch(firmware, /#include <LoRa\.h>|#include <esp_now\.h>|aero_network_secrets/);
 });

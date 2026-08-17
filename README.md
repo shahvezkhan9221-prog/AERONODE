@@ -1,6 +1,6 @@
 # Aero-Node Rescue Command
 
-Laptop command surface and ESP32 firmware for the Aero-Node off-grid LoRa rescue mesh. The dashboard uses Web Serial to communicate directly with the master gateway over USB at 115200 baud, manages one private conversation per survivor, and maps nodes and checked-in users with Google Maps.
+Laptop command surface and ESP32 firmware for the Aero-Node rescue-network prototype. The active hackathon demo uses one ESP32 as a phone Wi-Fi access point and USB Serial bridge. The dashboard manages one private conversation per survivor, receives playable short voice notes, and maps checked-in users with Google Maps. Experimental LoRa and ESP-NOW firmware remains in the repository for later multi-node work.
 
 ## Run locally
 
@@ -21,7 +21,20 @@ Enable the Google Maps JavaScript API and restrict the key to the deployed websi
 
 ## ESP32 firmware
 
-Flash [`firmware/aero_node_master_private_chat_gps.ino`](firmware/aero_node_master_private_chat_gps.ino) to the ESP32 master gateway. It creates the `AERO-NODE` access point and rescue portal at `http://192.168.4.1`, assigns each phone a persistent user ID, reports check-ins and messages as JSON over Serial, and delivers command replies only to the addressed user.
+For the current one-board demo, flash [`firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino`](firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino). It needs only the ESP32 Arduino core—no Ra-02, ESP-NOW peer, encryption header or second board. It creates the `AERO-NODE` access point and rescue portal at `http://192.168.4.1`, assigns each phone a persistent user ID, reports check-ins and messages as JSON over Serial, and delivers command replies only to the addressed user.
+
+The phone portal accepts short audio recordings or audio files up to 45 KB. It displays a minimum five-second encoding and transfer sequence, sends the real Base64 audio in 480-character chunks through the ESP32 and USB Serial, and the command dashboard displays receiving and decoding states before creating a playable audio message. This is a local one-board demonstration path, not a LoRa voice transfer.
+
+### One-board demo
+
+1. Select an ESP32 Dev Module in Arduino IDE and open the one-board `.ino` file.
+2. Flash it without adding any extra project header files.
+3. Keep the ESP32 attached to the command laptop over USB.
+4. On a phone, join the open `AERO-NODE` Wi-Fi and open `http://192.168.4.1` if the portal does not appear automatically.
+5. In Chrome or Edge on the laptop, open the command dashboard, click **Connect ESP32**, and select the board at 115200 baud.
+6. Send text, SOS, or a short voice note from the phone. Voice notes appear in that survivor's individual conversation.
+
+The sections below describe the optional multi-device experiments and are not required for the one-board demo.
 
 ## LoRa encryption and decryption
 

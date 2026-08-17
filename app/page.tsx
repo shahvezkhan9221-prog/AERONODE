@@ -6,7 +6,8 @@ import CommandMap from "./CommandMap";
 type Priority = "critical" | "normal";
 type View = "map" | "people" | "traffic";
 type Person = { id: string; name: string; nodeId: string; priority: Priority; lastMessage: string; lastSeen: string; lat?: number; lng?: number; online: boolean; locationKind?: "exact" | "approximate" };
-type ChatMessage = { id: string; userId: string; direction: "incoming" | "outgoing"; text: string; at: string; priority: Priority };
+type ChatMessage = { id: string; userId: string; direction: "incoming" | "outgoing"; text: string; at: string; priority: Priority; kind?: "text" | "voice"; audioUrl?: string; status?: "receiving" | "decoding" | "ready" | "failed" };
+type VoiceTransfer = { userId: string; name: string; mime: string; chunks: string[]; total: number };
 type NodeUnit = { id: string; label: string; online: boolean; battery?: number; rssi?: number; lat?: number; lng?: number; clients?: number };
 type LogItem = { id: number; at: string; type: "RX" | "TX" | "INFO" | "ERROR"; text: string; bytes: number };
 type SerialPortLike = { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array>; open(options: { baudRate: number }): Promise<void>; close(): Promise<void> };
@@ -30,9 +31,7 @@ export default function Home() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
-  const [radioSecurity, setRadioSecurity] = useState("Awaiting gateway");
-  const [networkTransport, setNetworkTransport] = useState("LoRa + ESP-NOW");
-  const [securityVerified, setSecurityVerified] = useState(false);
+  const [gatewayTransport, setGatewayTransport] = useState("Wi-Fi + USB Serial");
   const [locationState, setLocationState] = useState<"idle" | "locating" | "located" | "manual">("idle");
   const [reply, setReply] = useState("");
   const [logs, setLogs] = useState<LogItem[]>([{ id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin.", bytes: 0 }]);
@@ -40,6 +39,7 @@ export default function Home() {
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const readTaskRef = useRef<Promise<void> | null>(null);
   const keepReadingRef = useRef(false);
+  const voiceTransfersRef = useRef<Record<string, VoiceTransfer>>({});
 
   const selected = people.find((person) => person.id === selectedId) ?? null;
   const selectedMessages = useMemo(() => messages.filter((message) => message.userId === selectedId), [messages, selectedId]);
@@ -127,13 +127,47 @@ export default function Home() {
     if (packet) {
       const type = String(packet.type ?? "message").toLowerCase();
       const nodeId = String(packet.nodeId ?? packet.node_id ?? "MASTER");
-      const encryption = String(packet.encryption ?? "");
-      if (encryption && (type === "security" || nodeId === "MASTER")) {
-        setRadioSecurity(encryption);
-        if (packet.transport) setNetworkTransport(String(packet.transport));
-        setSecurityVerified(packet.secure === true);
-      }
+      if (packet.transport) setGatewayTransport(String(packet.transport));
       if (type === "security") return;
+      if (type === "voice_chunk") {
+        const voiceId = String(packet.voiceId ?? "");
+        const userId = String(packet.userId ?? "");
+        const index = Number(packet.index);
+        const total = Number(packet.total);
+        if (!voiceId || !userId || !Number.isInteger(index) || !Number.isInteger(total) || index < 0 || total < 1 || index >= total) return;
+        const transfer = voiceTransfersRef.current[voiceId] ?? { userId, name: String(packet.name ?? `Survivor ${userId.slice(-4)}`), mime: String(packet.mime ?? "audio/mp4"), chunks: Array(total).fill(""), total };
+        transfer.chunks[index] = String(packet.chunk ?? "");
+        voiceTransfersRef.current[voiceId] = transfer;
+        const messageId = `VOICE-${voiceId}`;
+        upsertPerson({ id: userId, name: transfer.name, nodeId, priority: "normal", lastMessage: `Receiving voice note · ${Math.round((index + 1) / total * 100)}%`, lastSeen: timeNow(), online: true });
+        setMessages((current) => current.some((message) => message.id === messageId)
+          ? current.map((message) => message.id === messageId ? { ...message, text: `Receiving voice note · ${Math.round((index + 1) / total * 100)}%` } : message)
+          : [...current, { id: messageId, userId, direction: "incoming", text: "Receiving voice note · 1%", at: timeNow(), priority: "normal", kind: "voice", status: "receiving" }]);
+        setSelectedId(userId);
+        return;
+      }
+      if (type === "voice_end") {
+        const voiceId = String(packet.voiceId ?? "");
+        const transfer = voiceTransfersRef.current[voiceId];
+        if (!transfer) return;
+        const messageId = `VOICE-${voiceId}`;
+        setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Decoding voice note…", status: "decoding" } : message));
+        window.setTimeout(() => {
+          try {
+            if (transfer.chunks.some((chunk) => !chunk)) throw new Error("Missing audio chunk");
+            const binary = window.atob(transfer.chunks.join(""));
+            const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+            const audioUrl = URL.createObjectURL(new Blob([bytes], { type: transfer.mime }));
+            setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Voice note", audioUrl, status: "ready" } : message));
+            setPeople((current) => current.map((person) => person.id === transfer.userId ? { ...person, lastMessage: "🎙 Voice note", lastSeen: timeNow() } : person));
+            addLog("INFO", `Voice note decoded · ${packet.bytes ?? bytes.byteLength} bytes`);
+          } catch {
+            setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Voice note could not be decoded", status: "failed" } : message));
+            addLog("ERROR", "Voice note decoding failed because one or more chunks were missing.");
+          } finally { delete voiceTransfersRef.current[voiceId]; }
+        }, 1600);
+        return;
+      }
       if (["telemetry", "node", "heartbeat"].includes(type)) {
         const next: NodeUnit = { id: nodeId, label: String(packet.label ?? nodeId), online: true, lat: numberOrUndefined(packet.lat), lng: numberOrUndefined(packet.lng ?? packet.lon), battery: numberOrUndefined(packet.battery), rssi: numberOrUndefined(packet.rssi), clients: numberOrUndefined(packet.clients) };
         setNodes((current) => current.some((node) => node.id === nodeId) ? current.map((node) => node.id === nodeId ? { ...node, ...next, lat: next.lat ?? node.lat, lng: next.lng ?? node.lng, battery: next.battery ?? node.battery, rssi: next.rssi ?? node.rssi, clients: next.clients ?? node.clients } : node) : [next, ...current]);
@@ -196,9 +230,7 @@ export default function Home() {
       await port.open({ baudRate: 115200 });
       portRef.current = port;
       keepReadingRef.current = true;
-      setRadioSecurity("Awaiting gateway");
-      setNetworkTransport("LoRa + ESP-NOW");
-      setSecurityVerified(false);
+      setGatewayTransport("Wi-Fi + USB Serial");
       setConnected(true);
       addLog("INFO", "ESP32 connected at 115200 baud");
       locateMaster();
@@ -216,9 +248,7 @@ export default function Home() {
     try { await portRef.current?.close(); } catch { setConnected(false); }
     portRef.current = null;
     setConnected(false);
-    setRadioSecurity("Awaiting gateway");
-    setNetworkTransport("LoRa + ESP-NOW");
-    setSecurityVerified(false);
+    setGatewayTransport("Wi-Fi + USB Serial");
     addLog("INFO", "ESP32 disconnected");
   };
 
@@ -257,14 +287,14 @@ export default function Home() {
           <button className={view === "traffic" ? "active" : ""} onClick={() => setView("traffic")}><span>↕</span><b>Traffic</b></button>
         </nav>
         <div className="header-actions">
-          <div className={`security-pill ${securityVerified ? "verified" : ""}`}><i>◆</i><span><small>HYBRID NETWORK</small>{securityVerified ? `${radioSecurity} · ${networkTransport}` : radioSecurity}</span></div>
+          <div className="security-pill verified"><i>◆</i><span><small>ONE-BOARD DEMO</small>{gatewayTransport}</span></div>
           <div className={`connection-pill ${connected ? "online" : ""}`}><i /><span><small>LOCAL GATEWAY</small>{connected ? "Online" : "Offline"}</span></div>
           <button className={`connect-button ${connected ? "disconnect" : ""}`} onClick={connected ? disconnect : connectSerial} disabled={connecting}>{connecting ? "Choose port…" : connected ? "Disconnect" : "Connect ESP32"}<span>→</span></button>
         </div>
       </header>
 
       <section className="command-bar">
-        <div className="command-copy"><p><i /> LIVE RESPONSE COORDINATION <span>/ HYBRID MASTER GATEWAY</span></p><h1>{view === "map" ? "Field intelligence" : view === "people" ? "Survivor communications" : "Gateway diagnostics"}</h1><span>{view === "map" ? "A single operational picture for every node, person and rescue signal." : view === "people" ? "Private, direct communication with every person connected to the mesh." : "Real-time USB, LoRa and ESP-NOW packet visibility for mission-critical verification."}</span></div>
+        <div className="command-copy"><p><i /> LIVE RESPONSE COORDINATION <span>/ SINGLE ESP32 GATEWAY</span></p><h1>{view === "map" ? "Field intelligence" : view === "people" ? "Survivor communications" : "Gateway diagnostics"}</h1><span>{view === "map" ? "A single operational picture for the gateway and every connected person." : view === "people" ? "Private text and playable voice notes from each connected phone." : "Real-time Wi-Fi-to-USB Serial visibility for your one-board demonstration."}</span></div>
         <div className="quick-stats glass"><div><i>⌁</i><span><strong>{wifiUsers}</strong><small>Wi-Fi users</small></span></div><div><i>◎</i><span><strong>{people.length}</strong><small>Checked in</small></span></div><div className={unreadCritical ? "danger" : ""}><i>!</i><span><strong>{unreadCritical}</strong><small>Critical</small></span></div></div>
       </section>
 
@@ -275,10 +305,10 @@ export default function Home() {
 
       {view === "people" && <section className="conversation-shell glass">
         <aside className="conversation-list"><div className="conversation-list-head"><small>ACTIVE PEOPLE</small><h2>Conversations</h2><p>Each phone has an independent thread.</p></div><div className="conversation-scroll">{people.length === 0 ? <Empty icon="◌" title="No conversations" text="Incoming messages create a separate person here." /> : people.map((person) => <button key={person.id} className={selectedId === person.id ? "selected" : ""} onClick={() => setSelectedId(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "New connection"}</p><small>{person.id} · {person.lastSeen}</small></div>{person.priority === "critical" && <i>!</i>}</button>)}</div></aside>
-        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "Exact GPS shared" : "Node-area location · approximate"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Messages from this person will appear only in this thread." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small><p>{message.text}</p><time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={180} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/180 · AES-256-GCM radio reply to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
+        <section className="chat-window">{selected ? <><header className="chat-head"><div className="chat-person"><Avatar name={selected.name} priority={selected.priority} /><div><h2>{selected.name}</h2><p><i /> Connected through {selected.nodeId} · {selected.lat !== undefined ? "Exact GPS shared" : "Gateway-area location · approximate"}</p></div></div><button onClick={() => setView("map")}>⌖ Show on map</button></header><div className="message-window">{selectedMessages.length === 0 ? <Empty icon="✦" title="Connection established" text="Text and voice notes from this person will appear here." /> : selectedMessages.map((message) => <div key={message.id} className={`chat-row ${message.direction} ${message.kind === "voice" ? "voice-message" : ""}`}><div><small>{message.direction === "incoming" ? selected.name : "Command"}</small>{message.kind === "voice" ? <div className={`voice-receiver ${message.status ?? "receiving"}`}><span>{message.status === "ready" ? "▶" : message.status === "failed" ? "!" : "◌"}</span><div><b>{message.text}</b><small>{message.status === "receiving" ? "USB packet stream in progress" : message.status === "decoding" ? "Reassembling audio chunks" : message.status === "ready" ? "Decoded at command panel" : "Transfer incomplete"}</small></div>{message.audioUrl && <audio controls preload="metadata" src={message.audioUrl}><track kind="captions" src="data:text/vtt,WEBVTT%0A" srcLang="en" label="No captions available" /></audio>}</div> : <p>{message.text}</p>}<time>{message.at}</time></div></div>)}</div><footer className="composer"><textarea value={reply} maxLength={180} onChange={(event) => setReply(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void sendReply(); } }} placeholder={connected ? `Reply privately to ${selected.name}…` : "Connect the ESP32 to reply"} disabled={!connected} /><button onClick={sendReply} disabled={!connected || !reply.trim()}>Send reply <span>→</span></button><small>{reply.length}/180 · Local Wi-Fi/USB reply to {selected.name}</small></footer></> : <Empty icon="↗" title="Select a person" text="Choose a checked-in survivor to open their private conversation." />}</section>
       </section>}
 
-      {view === "traffic" && <section className="traffic-panel glass"><header><div><small>SERIAL MONITOR</small><h2>Live gateway traffic</h2><p>USB ↔ ESP32 ↔ LoRa + ESP-NOW at 115200 baud</p></div><div className="traffic-legend"><span><i className="rx-dot" />Received</span><span><i className="tx-dot" />Sent</span><button onClick={() => setLogs([])}>Clear traffic</button></div></header><div className="traffic-table"><div className="traffic-row traffic-labels"><span>TIME</span><span>TYPE</span><span>SIZE</span><span>PACKET</span></div>{logs.length === 0 ? <Empty icon="↕" title="Traffic cleared" text="New serial packets will appear here." /> : logs.slice().reverse().map((log) => <div className="traffic-row" key={log.id}><time>{log.at}</time><b className={log.type.toLowerCase()}>{log.type}</b><em>{log.bytes > 0 ? `${log.bytes} B` : "—"}</em><p>{log.text}</p></div>)}</div></section>}
+      {view === "traffic" && <section className="traffic-panel glass"><header><div><small>SERIAL MONITOR</small><h2>Live gateway traffic</h2><p>Phone Wi-Fi ↔ ESP32 ↔ USB Serial at 115200 baud</p></div><div className="traffic-legend"><span><i className="rx-dot" />Received</span><span><i className="tx-dot" />Sent</span><button onClick={() => setLogs([])}>Clear traffic</button></div></header><div className="traffic-table"><div className="traffic-row traffic-labels"><span>TIME</span><span>TYPE</span><span>SIZE</span><span>PACKET</span></div>{logs.length === 0 ? <Empty icon="↕" title="Traffic cleared" text="New serial packets will appear here." /> : logs.slice().reverse().map((log) => <div className="traffic-row" key={log.id}><time>{log.at}</time><b className={log.type.toLowerCase()}>{log.type}</b><em>{log.bytes > 0 ? `${log.bytes} B` : "—"}</em><p>{log.text}</p></div>)}</div></section>}
     </main>
   );
 }
