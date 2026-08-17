@@ -19,10 +19,16 @@ function header(id) {
   return `#pragma once\n\nstatic const uint8_t AERO_NETWORK_KEY[32] = {\n${keyLines}\n};\n\nstatic const uint32_t AERO_NODE_ID = ${id};\n`;
 }
 
-const masterPath = resolve(projectRoot, "firmware/aero_network_secrets.h");
-const peerDirectory = resolve(projectRoot, "firmware/secure_peer_example");
-const peerPath = resolve(peerDirectory, "aero_network_secrets.h");
-await mkdir(peerDirectory, { recursive: true });
-await writeFile(masterPath, header(nodeId()), { mode: 0o600 });
-await writeFile(peerPath, header(nodeId()), { mode: 0o600 });
-process.stdout.write("Created matching AES-256 keys with unique node IDs for the master and secure peer.\n");
+const destinations = [
+  "firmware/aero_network_secrets.h",
+  "firmware/secure_peer_example/aero_network_secrets.h",
+  "firmware/espnow_field_node/aero_network_secrets.h",
+  "firmware/espnow_relay_node/aero_network_secrets.h",
+];
+
+for (const destination of destinations) {
+  const path = resolve(projectRoot, destination);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, header(nodeId()), { mode: 0o600 });
+}
+process.stdout.write("Created one shared AES-256 key with unique node IDs for the master, LoRa peer, ESP-NOW field node and ESP-NOW relay.\n");

@@ -44,14 +44,46 @@ From the project directory, run this once:
 node tools/generate-aero-secrets.mjs
 ```
 
-It creates two ignored files containing the same random 256-bit key and different random node IDs:
+It creates four ignored files containing the same random 256-bit key and different random node IDs:
 
 - `firmware/aero_network_secrets.h` for the master sketch.
 - `firmware/secure_peer_example/aero_network_secrets.h` for the matching peer sketch.
+- `firmware/espnow_field_node/aero_network_secrets.h` for the ESP-NOW field node.
+- `firmware/espnow_relay_node/aero_network_secrets.h` for the ESP-NOW relay.
 
 These secret files are excluded by `.gitignore`. Never paste the key into the dashboard, Serial Monitor, screenshots or GitHub. For another field node, copy a generated secret header so it keeps the same key, then assign that device a new unique non-zero `AERO_NODE_ID`.
 
 Flash the master sketch and [`firmware/secure_peer_example/secure_peer_example.ino`](firmware/secure_peer_example/secure_peer_example.ino) to two ESP32/Ra-02 devices for a bench test. Both radios must use the same frequency and LoRa settings. Text entered into the peer Serial Monitor is encrypted before transmission; the master decrypts it only after its authentication tag and replay counter pass validation.
+
+## Hybrid ESP-NOW + LoRa network
+
+ESP-NOW is the nearby ESP32-to-ESP32 layer; LoRa remains the long-range backbone. The master transmits the same AES-256-GCM envelope over both transports. Whichever copy arrives first is accepted, and the other is rejected by the replay counter as a duplicate.
+
+```text
+Phone -> field ESP32 -> ESP-NOW relay(s) -> hybrid gateway -> USB dashboard
+                           |                    ^
+                           +------ LoRa --------+
+```
+
+All ESP-NOW devices use Wi-Fi channel 6. The master uses `WIFI_AP_STA`, so it can keep the phone captive portal active while receiving ESP-NOW packets. Broadcast ESP-NOW frames are protected by the application AES-256-GCM envelope because ESP-NOW's LMK encryption does not support multicast/broadcast.
+
+Use these sketches:
+
+- [`firmware/espnow_field_node/espnow_field_node.ino`](firmware/espnow_field_node/espnow_field_node.ino): sends an encrypted SOS when GPIO 27 is pressed, accepts a text message from Serial, and emits a real heartbeat.
+- [`firmware/espnow_relay_node/espnow_relay_node.ino`](firmware/espnow_relay_node/espnow_relay_node.ino): authenticates each new frame and broadcasts it once. Duplicate/replayed frames are dropped, preventing an endless relay loop.
+- [`firmware/aero_node_master_private_chat_gps.ino`](firmware/aero_node_master_private_chat_gps.ino): receives encrypted ESP-NOW and LoRa copies, decrypts the first valid copy, and sends the resulting JSON to the dashboard.
+
+This is a controlled flooding relay for a hackathon prototype, not a complete routing protocol. ESP-NOW operates on Wi-Fi radio and does not automatically become long range or self-healing. Add packet acknowledgements, hop limits, route scoring and store-and-forward queues before calling it a production mesh.
+
+### Hybrid demo setup
+
+1. Generate the secret headers with `node tools/generate-aero-secrets.mjs`.
+2. Flash the hybrid master sketch and leave it connected to the command laptop.
+3. Flash the relay sketch to a second ESP32 and power it between the field node and gateway.
+4. Flash the field-node sketch to a third ESP32. Connect a push button between GPIO 27 and GND.
+5. Open Serial Monitor at 115200 on the field node and type a message, or press the button for an SOS.
+6. Open the dashboard Traffic view. It reports whether the authenticated packet arrived over `ESP-NOW` or `LoRa`.
+7. Move the field node out of direct ESP-NOW reach while keeping the relay between it and the master. Repeat the SOS to demonstrate the relay path.
 
 If you erase the ESP32 flash/NVS, rotate the network key before sending again because the persistent transmit counter also resets. For a production deployment, use per-node keys or a proper provisioning system, store keys in protected hardware, and persist receiver replay state. A shared network key means one captured node can expose the rest of that mesh.
 
@@ -88,7 +120,7 @@ The supplied firmware stores the reply for only that user and forwards a compact
 - Browser geolocation can fail on desktop Linux even when permission is allowed. The dashboard automatically offers click-to-place mode for the master node.
 - Phone geolocation normally requires HTTPS. The HTTP captive portal therefore falls back to a clearly marked approximate node-area position when exact GPS is unavailable.
 - LoRa CRC still detects accidental radio corruption. AES-256-GCM adds confidentiality and cryptographic authentication at the application layer, while the packet counter provides prototype replay protection.
-- Encryption covers the **LoRa hop only**. The ESP access point and local captive portal remain open HTTP so an unknown survivor can connect without a password. Nearby Wi-Fi users could observe that local hop; use WPA2/provisioning or an end-to-end application protocol when that threat matters.
+- The AES-256-GCM application envelope covers both LoRa and ESP-NOW device-to-device packets. The ESP access point and survivor phone-to-captive-portal hop remain open HTTP so an unknown survivor can connect without a password. Nearby Wi-Fi users could observe that local hop; use WPA2/provisioning or an end-to-end application protocol when that threat matters.
 - The live dashboard is public by design. It keeps received data only in the current browser session, but anyone with physical access to the command laptop or its open dashboard can view that session.
 
 ## Checks

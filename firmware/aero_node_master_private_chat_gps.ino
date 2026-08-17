@@ -3,6 +3,10 @@
 #include <DNSServer.h>
 #include <SPI.h>
 #include <LoRa.h>
+#include <esp_now.h>
+#include <esp_idf_version.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include "aero_network_secrets.h"
 #include "AeroCrypto.h"
 
@@ -22,7 +26,20 @@ DNSServer dnsServer;
 #define LORA_MOSI 23
 #define LORA_FREQ 433E6
 
+const uint8_t WIFI_CHANNEL = 6;
+const size_t ESPNOW_MAX_FRAME_BYTES = 250;
+const uint8_t ESPNOW_BROADCAST[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+
+struct EspNowRxFrame {
+  uint8_t sender[6];
+  uint8_t length;
+  uint8_t data[ESPNOW_MAX_FRAME_BYTES];
+};
+
+QueueHandle_t espNowRxQueue = nullptr;
+
 AeroCrypto radioCrypto(AERO_NETWORK_KEY, AERO_NODE_ID);
+void addMessage(String sender, String recipient, String text);
 
 const int MAX_MESSAGES = 40;
 String messageSender[MAX_MESSAGES];
@@ -53,7 +70,66 @@ bool sendEncryptedRadio(const String& plaintext) {
   }
   LoRa.beginPacket();
   LoRa.write(frame, frameLength);
-  return LoRa.endPacket() == 1;
+  bool loraQueued = LoRa.endPacket() == 1;
+  bool espNowQueued = frameLength <= ESPNOW_MAX_FRAME_BYTES &&
+    esp_now_send(ESPNOW_BROADCAST, frame, frameLength) == ESP_OK;
+  return loraQueued || espNowQueued;
+}
+
+void queueEspNowFrame(const uint8_t* sender, const uint8_t* data, int length) {
+  if (!espNowRxQueue || !sender || !data || length < 1 || length > static_cast<int>(ESPNOW_MAX_FRAME_BYTES)) return;
+  EspNowRxFrame frame = {};
+  memcpy(frame.sender, sender, sizeof(frame.sender));
+  frame.length = static_cast<uint8_t>(length);
+  memcpy(frame.data, data, length);
+  xQueueSend(espNowRxQueue, &frame, 0);
+}
+
+#if ESP_IDF_VERSION_MAJOR >= 5
+void onEspNowReceive(const esp_now_recv_info_t* info, const uint8_t* data, int length) {
+  queueEspNowFrame(info ? info->src_addr : nullptr, data, length);
+}
+#else
+void onEspNowReceive(const uint8_t* sender, const uint8_t* data, int length) {
+  queueEspNowFrame(sender, data, length);
+}
+#endif
+
+bool beginEspNow() {
+  espNowRxQueue = xQueueCreate(8, sizeof(EspNowRxFrame));
+  if (!espNowRxQueue || esp_now_init() != ESP_OK) return false;
+  if (esp_now_register_recv_cb(onEspNowReceive) != ESP_OK) return false;
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, ESPNOW_BROADCAST, sizeof(peer.peer_addr));
+  peer.channel = WIFI_CHANNEL;
+  peer.ifidx = WIFI_IF_STA;
+  peer.encrypt = false; // Broadcast cannot use ESP-NOW LMK; AeroCrypto protects the payload.
+  return esp_now_add_peer(&peer) == ESP_OK || esp_now_is_peer_exist(ESPNOW_BROADCAST);
+}
+
+void processEncryptedNetworkFrame(const uint8_t* frame, size_t frameLength, const char* transport) {
+  uint8_t plaintext[AeroCrypto::kMaxPlaintextBytes + 1];
+  size_t plaintextLength = 0;
+  AeroDecryptResult result = radioCrypto.decrypt(frame, frameLength, plaintext, sizeof(plaintext), plaintextLength);
+  if (result == AeroDecryptResult::Ok) {
+    String message = reinterpret_cast<const char*>(plaintext);
+    Serial.print("{\"type\":\"network\",\"transport\":\""); Serial.print(transport);
+    Serial.print("\",\"authenticated\":true,\"bytes\":"); Serial.print(frameLength); Serial.println("}");
+    if (message.startsWith("{")) Serial.println(message);
+    else { addMessage("RELAY", "BROADCAST", message); Serial.print("RELAY: "); Serial.println(message); }
+  } else if (result == AeroDecryptResult::AuthenticationFailed) {
+    Serial.print("{\"type\":\"error\",\"message\":\"Rejected "); Serial.print(transport); Serial.println(" packet: authentication failed\"}");
+  } else if (result != AeroDecryptResult::ReplayRejected) {
+    Serial.print("{\"type\":\"error\",\"message\":\"Rejected invalid encrypted "); Serial.print(transport); Serial.println(" packet\"}");
+  }
+}
+
+void processEspNowQueue() {
+  if (!espNowRxQueue) return;
+  EspNowRxFrame frame;
+  while (xQueueReceive(espNowRxQueue, &frame, 0) == pdTRUE) {
+    processEncryptedNetworkFrame(frame.data, frame.length, "ESP-NOW");
+  }
 }
 
 String jsonField(const String& json, const String& key) {
@@ -114,7 +190,7 @@ void reportWifiClients() {
   if (clients == lastWifiClientCount && now - lastWifiReportMs < WIFI_REPORT_INTERVAL_MS) return;
   lastWifiClientCount = clients;
   lastWifiReportMs = now;
-  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Laptop Gateway\",\"encryption\":\"AES-256-GCM\",\"secure\":true,\"clients\":");
+  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Laptop Gateway\",\"encryption\":\"AES-256-GCM\",\"transport\":\"LoRa + ESP-NOW\",\"secure\":true,\"clients\":");
   Serial.print(clients);
   Serial.println("}");
 }
@@ -208,13 +284,17 @@ void handleSerialCommand(String line) {
 void setup() {
   Serial.begin(115200);
   delay(600);
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(WIFI_NAME);
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(WIFI_NAME, nullptr, WIFI_CHANNEL);
   IPAddress apIP = WiFi.softAPIP();
   dnsServer.start(DNS_PORT, "*", apIP);
 
   if (!radioCrypto.begin()) {
     Serial.println("CRYPTO START FAILED: generate aero_network_secrets.h and use a unique non-zero node ID");
+    while (true) delay(1000);
+  }
+  if (!beginEspNow()) {
+    Serial.println("ESP-NOW START FAILED");
     while (true) delay(1000);
   }
 
@@ -242,33 +322,21 @@ void setup() {
   server.onNotFound(handleHome);
   server.begin();
   Serial.println("Aero-Node ready at http://192.168.4.1");
-  Serial.println("{\"type\":\"security\",\"encryption\":\"AES-256-GCM\",\"secure\":true}");
+  Serial.println("{\"type\":\"security\",\"encryption\":\"AES-256-GCM\",\"transport\":\"LoRa + ESP-NOW\",\"secure\":true}");
 }
 
 void loop() {
   dnsServer.processNextRequest();
   server.handleClient();
   reportWifiClients();
+  processEspNowQueue();
 
   int packetSize = LoRa.parsePacket();
   if (packetSize) {
     uint8_t frame[255];
     size_t frameLength = 0;
     while (LoRa.available() && frameLength < sizeof(frame)) frame[frameLength++] = LoRa.read();
-    uint8_t plaintext[AeroCrypto::kMaxPlaintextBytes + 1];
-    size_t plaintextLength = 0;
-    AeroDecryptResult result = radioCrypto.decrypt(frame, frameLength, plaintext, sizeof(plaintext), plaintextLength);
-    if (result == AeroDecryptResult::Ok) {
-      String message = reinterpret_cast<const char*>(plaintext);
-      addMessage("RELAY", "BROADCAST", message);
-      Serial.print("RELAY: "); Serial.println(message);
-    } else if (result == AeroDecryptResult::AuthenticationFailed) {
-      Serial.println("{\"type\":\"error\",\"message\":\"Rejected LoRa packet: authentication failed\"}");
-    } else if (result == AeroDecryptResult::ReplayRejected) {
-      Serial.println("{\"type\":\"error\",\"message\":\"Rejected LoRa packet: replay detected\"}");
-    } else {
-      Serial.println("{\"type\":\"error\",\"message\":\"Rejected invalid encrypted LoRa packet\"}");
-    }
+    processEncryptedNetworkFrame(frame, frameLength, "LoRa");
   }
 
   if (Serial.available()) handleSerialCommand(Serial.readStringUntil('\n'));
