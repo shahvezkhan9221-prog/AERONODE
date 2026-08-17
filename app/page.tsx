@@ -22,6 +22,15 @@ const numberOrUndefined = (value: unknown) => {
   const number = Number(value);
   return Number.isFinite(number) ? number : undefined;
 };
+const detectAudioMime = (bytes: Uint8Array, supplied: string) => {
+  const ascii = (start: number, end: number) => String.fromCharCode(...bytes.slice(start, end));
+  if (ascii(0, 4) === "RIFF" && ascii(8, 12) === "WAVE") return "audio/wav";
+  if (ascii(0, 4) === "OggS") return "audio/ogg";
+  if (ascii(0, 3) === "ID3" || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) return "audio/mpeg";
+  if (ascii(4, 8) === "ftyp") return "audio/mp4";
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return "audio/webm";
+  return supplied || "application/octet-stream";
+};
 
 export default function Home() {
   const [view, setView] = useState<View>("map");
@@ -157,7 +166,9 @@ export default function Home() {
             if (transfer.chunks.some((chunk) => !chunk)) throw new Error("Missing audio chunk");
             const binary = window.atob(transfer.chunks.join(""));
             const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
-            const audioUrl = URL.createObjectURL(new Blob([bytes], { type: transfer.mime }));
+            if (bytes.byteLength < 44) throw new Error("Audio payload is empty");
+            const audioMime = detectAudioMime(bytes, transfer.mime);
+            const audioUrl = URL.createObjectURL(new Blob([bytes], { type: audioMime }));
             setMessages((current) => current.map((message) => message.id === messageId ? { ...message, text: "Voice note", audioUrl, status: "ready" } : message));
             setPeople((current) => current.map((person) => person.id === transfer.userId ? { ...person, lastMessage: "🎙 Voice note", lastSeen: timeNow() } : person));
             addLog("INFO", `Voice note decoded · ${packet.bytes ?? bytes.byteLength} bytes`);
