@@ -14,6 +14,8 @@ type SerialNavigator = Navigator & { serial?: { requestPort(): Promise<SerialPor
 
 const timeNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const DEFAULT_MASTER_LOCATION = { lat: 28.462802, lng: 77.493290 };
+const APPROXIMATE_USER_DISTANCE_METERS = 5;
+const METERS_PER_LATITUDE_DEGREE = 111_320;
 const numberOrUndefined = (value: unknown) => {
   if (value === undefined || value === null || value === "") return undefined;
   const number = Number(value);
@@ -51,8 +53,11 @@ export default function Home() {
     if (total < 1) return [];
     const aroundMaster = (index: number) => {
       const angle = (index / total) * Math.PI * 2;
-      const radius = 0.00018 + (index % 2) * 0.00007;
-      return { lat: (master.lat as number) + Math.cos(angle) * radius, lng: (master.lng as number) + Math.sin(angle) * radius };
+      const masterLatitude = master.lat as number;
+      const latitudeOffset = Math.cos(angle) * APPROXIMATE_USER_DISTANCE_METERS / METERS_PER_LATITUDE_DEGREE;
+      const longitudeMetersPerDegree = METERS_PER_LATITUDE_DEGREE * Math.cos(masterLatitude * Math.PI / 180);
+      const longitudeOffset = Math.sin(angle) * APPROXIMATE_USER_DISTANCE_METERS / longitudeMetersPerDegree;
+      return { lat: masterLatitude + latitudeOffset, lng: (master.lng as number) + longitudeOffset };
     };
     const checkedIn = unlocated.map((person, index) => ({ ...person, ...aroundMaster(index), locationKind: "approximate" as const }));
     const unknown = Array.from({ length: placeholderCount }, (_, index) => ({ id: `UNREGISTERED-${index + 1}`, name: `Connected device ${index + 1}`, nodeId: "MASTER", priority: "normal" as const, lastMessage: "Waiting for rescue portal check-in", lastSeen: "online", online: true, ...aroundMaster(unlocated.length + index), locationKind: "approximate" as const }));
@@ -247,7 +252,7 @@ export default function Home() {
       </section>
 
       {view === "map" && <section className="map-dashboard">
-        <section className="map-card glass"><div className="card-heading"><div><small>LIVE OPERATIONS MAP</small><h2>People and nodes</h2></div><div className="map-actions"><span>{locatedNodes.length + mappedPeople.length} mapped</span><button className={locationState === "manual" ? "manual" : ""} onClick={locationState === "locating" || locationState === "manual" ? () => setLocationState("manual") : locateMaster}>{locationState === "located" ? "↻ Re-locate laptop" : locationState === "locating" ? "Use map instead" : locationState === "manual" ? "Click map to place master" : "Use laptop location"}</button></div></div><div className="map-wrap"><CommandMap nodes={locatedNodes} people={mappedPeople} selectedId={selectedId ?? ""} onSelect={openConversation} pickingLocation={locationState === "manual"} onPickLocation={pickMasterLocation} />{locatedNodes.length + mappedPeople.length === 0 && locationState !== "manual" && <div className="map-empty glass"><Empty icon="⌖" title="No locations received" text={locationState === "locating" ? "Waiting for the laptop location provider…" : "Connect the gateway and allow laptop location."} /></div>}</div><p className="map-caption"><b>Location confidence:</b> checked-in users with shared GPS are exact. Connected devices without GPS use green approximate markers near the master. If laptop location is denied, the master defaults to 28.462802, 77.493290.</p></section>
+        <section className="map-card glass"><div className="card-heading"><div><small>LIVE OPERATIONS MAP</small><h2>People and nodes</h2></div><div className="map-actions"><span>{locatedNodes.length + mappedPeople.length} mapped</span><button className={locationState === "manual" ? "manual" : ""} onClick={locationState === "locating" || locationState === "manual" ? () => setLocationState("manual") : locateMaster}>{locationState === "located" ? "↻ Re-locate laptop" : locationState === "locating" ? "Use map instead" : locationState === "manual" ? "Click map to place master" : "Use laptop location"}</button></div></div><div className="map-wrap"><CommandMap nodes={locatedNodes} people={mappedPeople} selectedId={selectedId ?? ""} onSelect={openConversation} pickingLocation={locationState === "manual"} onPickLocation={pickMasterLocation} />{locatedNodes.length + mappedPeople.length === 0 && locationState !== "manual" && <div className="map-empty glass"><Empty icon="⌖" title="No locations received" text={locationState === "locating" ? "Waiting for the laptop location provider…" : "Connect the gateway and allow laptop location."} /></div>}</div><p className="map-caption"><b>Location confidence:</b> checked-in users with shared GPS are exact. Connected devices without GPS use green approximate markers exactly 5 metres from the red master flag. If laptop location is denied, the master defaults to 28.462802, 77.493290.</p></section>
         <aside className="roster-card glass"><div className="card-heading"><div><small>PEOPLE IN RANGE</small><h2>Recent check-ins</h2></div><span className="count-pill">{people.length}</span></div><div className="roster-list">{people.length === 0 ? <Empty icon="◌" title="No one checked in" text="A person appears here after opening the rescue portal." /> : people.map((person) => <button key={person.id} className="roster-person" onClick={() => openConversation(person.id)}><Avatar name={person.name} priority={person.priority} /><div><b>{person.name}</b><p>{person.lastMessage || "Connected to rescue portal"}</p><small>{person.lat !== undefined ? "Exact GPS shared" : "Mapped near master · approximate"} · {person.lastSeen}</small></div><span>→</span></button>)}</div>{placeholderCount > 0 && <div className="pending-devices"><span>⌁</span><div><b>{placeholderCount} connected {placeholderCount === 1 ? "device" : "devices"} not checked in</b><small>Ask them to open 192.168.4.1</small></div></div>}</aside>
       </section>}
 

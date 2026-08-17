@@ -43,6 +43,8 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /selectedMessages/);
   assert.match(page, /locationKind: "approximate"/);
   assert.match(page, /Mapped near master · approximate/);
+  assert.match(page, /APPROXIMATE_USER_DISTANCE_METERS = 5/);
+  assert.match(page, /exactly 5 metres from the red master flag/);
   assert.match(page, /Click map to place master/);
   assert.match(page, /enableHighAccuracy: false/);
   const map = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/CommandMap.tsx", import.meta.url), "utf8"));
