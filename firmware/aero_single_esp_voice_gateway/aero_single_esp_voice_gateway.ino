@@ -13,9 +13,17 @@ DNSServer dnsServer;
 
 const int MAX_MESSAGES = 40;
 String messageSender[MAX_MESSAGES];
+String messageSenderId[MAX_MESSAGES];
+String messageSenderName[MAX_MESSAGES];
 String messageRecipient[MAX_MESSAGES];
 String messageText[MAX_MESSAGES];
+String messageChannel[MAX_MESSAGES];
 int messageCount = 0;
+const int MAX_MEMBERS = 16;
+const unsigned long MEMBER_ACTIVE_MS = 35000;
+String memberId[MAX_MEMBERS];
+String memberName[MAX_MEMBERS];
+unsigned long memberSeenMs[MAX_MEMBERS];
 int lastWifiClientCount = -1;
 unsigned long lastWifiReportMs = 0;
 
@@ -46,19 +54,56 @@ String jsonField(const String& json, const String& key) {
   return result;
 }
 
-void addMessage(const String& sender, const String& recipient, const String& text) {
+void addMessage(const String& sender, const String& senderId, const String& senderName,
+                const String& recipient, const String& text, const String& channel) {
   if (messageCount >= MAX_MESSAGES) {
     for (int i = 0; i < MAX_MESSAGES - 1; i++) {
       messageSender[i] = messageSender[i + 1];
+      messageSenderId[i] = messageSenderId[i + 1];
+      messageSenderName[i] = messageSenderName[i + 1];
       messageRecipient[i] = messageRecipient[i + 1];
       messageText[i] = messageText[i + 1];
+      messageChannel[i] = messageChannel[i + 1];
     }
     messageCount = MAX_MESSAGES - 1;
   }
   messageSender[messageCount] = sender;
+  messageSenderId[messageCount] = senderId;
+  messageSenderName[messageCount] = senderName;
   messageRecipient[messageCount] = recipient;
   messageText[messageCount] = text;
+  messageChannel[messageCount] = channel;
   messageCount++;
+}
+
+void touchMember(const String& userId, const String& name) {
+  if (!userId.length()) return;
+  int slot = -1;
+  unsigned long oldestAge = 0;
+  for (int i = 0; i < MAX_MEMBERS; i++) {
+    if (memberId[i] == userId) { slot = i; break; }
+    if (!memberId[i].length()) { slot = i; break; }
+    unsigned long age = millis() - memberSeenMs[i];
+    if (age >= oldestAge) { oldestAge = age; slot = i; }
+  }
+  int suffixStart = userId.length() > 4 ? userId.length() - 4 : 0;
+  memberId[slot] = userId;
+  memberName[slot] = name.length() ? name : String("Survivor ") + userId.substring(suffixStart);
+  memberSeenMs[slot] = millis();
+}
+
+void handleMembers() {
+  String json = "[";
+  bool first = true;
+  unsigned long now = millis();
+  for (int i = 0; i < MAX_MEMBERS; i++) {
+    if (!memberId[i].length() || now - memberSeenMs[i] > MEMBER_ACTIVE_MS) continue;
+    if (!first) json += ",";
+    first = false;
+    json += "{\"id\":\"" + jsonEscape(memberId[i]) + "\",\"name\":\"" + jsonEscape(memberName[i]) + "\"}";
+  }
+  json += "]";
+  server.send(200, "application/json; charset=utf-8", json);
 }
 
 void printPersonPacket(const String& type, const String& userId, const String& name,
@@ -79,7 +124,7 @@ void reportWifiClients() {
   if (clients == lastWifiClientCount && now - lastWifiReportMs < 2000) return;
   lastWifiClientCount = clients;
   lastWifiReportMs = now;
-  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"mp3-transfer-v5\",\"clients\":");
+  Serial.print("{\"type\":\"telemetry\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"group-mp3-v6\",\"clients\":");
   Serial.print(clients); Serial.println("}");
 }
 
@@ -89,29 +134,32 @@ const char RESCUE_PAGE[] PROGMEM = R"rawliteral(
 *{box-sizing:border-box}body{margin:0;min-height:100vh;color:#132238;font-family:Inter,Arial,sans-serif;background:radial-gradient(circle at 8% 0,#b7d3ff,transparent 32%),radial-gradient(circle at 100% 12%,#a4f0df,transparent 30%),linear-gradient(145deg,#f8fbff,#eaf2ff)}button,input,textarea{font:inherit}.shell{max-width:620px;margin:auto;padding:14px 14px 30px}.glass{background:#ffffffd9;border:1px solid #fff;box-shadow:0 22px 60px #3157831f;backdrop-filter:blur(22px)}
 .head{position:sticky;z-index:5;top:10px;display:flex;align-items:center;gap:12px;padding:13px;border-radius:20px}.logo{display:grid;place-items:center;width:44px;height:44px;border-radius:14px;color:#fff;background:linear-gradient(145deg,#5685ff,#2858db);box-shadow:0 10px 25px #2f64df47;font-size:20px;font-weight:900}.brand{flex:1}.brand b{display:block;font-size:15px}.brand small{color:#738197;font-size:10px}.online{padding:8px 10px;border-radius:99px;color:#087c68;background:#e2f8f2;font-size:9px;font-weight:800}.hero{padding:30px 5px 19px}.hero>small{color:#3268ec;font-size:9px;font-weight:900;letter-spacing:.16em}.hero h1{margin:9px 0 10px;font-size:38px;line-height:.98;letter-spacing:-2px}.hero p{margin:0;color:#68788e;font-size:12px;line-height:1.55}
 .card{margin-bottom:13px;padding:17px;border-radius:22px}.title{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}.title b{font-size:14px}.title span{color:#8390a2;font-size:9px}.profile-grid,.compose{display:grid;grid-template-columns:1fr auto;gap:8px}input,textarea{width:100%;padding:13px;border:1px solid #dce5f1;border-radius:13px;outline:0;color:#17233a;background:#f9fbff}textarea{height:66px;resize:none}input:focus,textarea:focus{border-color:#7da0ff;box-shadow:0 0 0 3px #3d6ff514}.primary{border:0;border-radius:13px;color:#fff;background:linear-gradient(145deg,#4778f4,#2e5dd8);font-weight:800}.save,.send{padding:0 17px}.location{width:100%;height:44px;margin-top:9px;border:0;border-radius:13px;color:#087b68;background:#e7f8f3;font-size:11px;font-weight:800}.location.warn{color:#8a6220;background:#fff1dc}.help{display:block;margin:7px 4px 0;color:#7d899b;font-size:9px;line-height:1.45}
-#chat{height:260px;overflow:auto;padding:5px}.msg{max-width:84%;margin:10px 0;padding:10px 12px;border-radius:5px 15px 15px;color:#25334a;background:#fff;box-shadow:0 6px 18px #455d8414;font-size:13px;line-height:1.4}.msg.mine{margin-left:auto;border-radius:15px 5px 15px 15px;color:#fff;background:linear-gradient(145deg,#4979f3,#305ed7)}.msg small{display:block;margin-bottom:4px;font-size:8px;opacity:.65}.compose{margin-top:9px}.sos{width:100%;height:45px;margin-top:8px;border:0;border-radius:13px;color:#fff;background:linear-gradient(145deg,#f26472,#db3f50);font-size:11px;font-weight:900}
+.channel-tabs{display:grid;grid-template-columns:1fr 1fr;padding:4px;border:1px solid #e1e8f3;border-radius:14px;background:#f1f5fb}.channel-tabs button{height:39px;border:0;border-radius:10px;color:#718096;background:transparent;font-size:10px;font-weight:850}.channel-tabs button.active{color:#fff;background:linear-gradient(145deg,#4e7cf6,#315ed7);box-shadow:0 8px 20px #315ed72b}.channel-tabs b{display:inline-grid;place-items:center;min-width:18px;height:18px;margin-left:5px;padding:0 5px;border-radius:9px;color:#087c68;background:#ddf7f0;font-size:8px}.channel-tabs .active b{color:#315ed7;background:#fff}.members{display:flex;overflow:auto;margin:10px 0 4px;padding:3px 1px 5px;gap:6px}.members span{display:flex;align-items:center;padding:7px 9px;gap:6px;border:1px solid #dce8e4;border-radius:99px;color:#456257;background:#f0faf7;font-size:8px;font-weight:800;white-space:nowrap}.members i{width:6px;height:6px;border-radius:50%;background:#16b995;box-shadow:0 0 0 3px #16b99518}.channel-note{display:block;margin:7px 3px;color:#7e8b9d;font-size:8px}.channel-note b{color:#3268ec}
+#chat{height:260px;overflow:auto;padding:5px}.msg{max-width:84%;margin:10px 0;padding:10px 12px;border-radius:5px 15px 15px;color:#25334a;background:#fff;box-shadow:0 6px 18px #455d8414;font-size:13px;line-height:1.4}.msg.mine{margin-left:auto;border-radius:15px 5px 15px 15px;color:#fff;background:linear-gradient(145deg,#4979f3,#305ed7)}.msg small{display:block;margin-bottom:4px;font-size:8px;font-weight:800;opacity:.65}.compose{margin-top:9px}.sos{width:100%;height:45px;margin-top:8px;border:0;border-radius:13px;color:#fff;background:linear-gradient(145deg,#f26472,#db3f50);font-size:11px;font-weight:900}
 .voice{overflow:hidden;position:relative;margin-top:11px;padding:14px;border:1px solid #dce7ff;border-radius:17px;background:linear-gradient(145deg,#edf3ff,#f7faff)}.voice-top{display:flex;align-items:center;gap:11px}.mic{display:grid;place-items:center;width:42px;height:42px;border-radius:14px;color:#fff;background:linear-gradient(145deg,#785bff,#4d6ef1);font-size:18px;box-shadow:0 10px 24px #536ae63a}.voice-copy{flex:1}.voice-copy b{display:block;font-size:12px}.voice-copy small{color:#78869b;font-size:9px}.record{width:100%;height:43px;margin-top:11px;border:0;border-radius:12px;color:#415477;background:#fff;box-shadow:inset 0 0 0 1px #dce5f5;font-size:10px;font-weight:850}.record:disabled{opacity:.55}.progress{display:none;margin-top:11px}.progress.show{display:block}.track{height:6px;overflow:hidden;border-radius:9px;background:#dce5f4}.bar{width:0;height:100%;border-radius:9px;background:linear-gradient(90deg,#4c7cf5,#21b99c);transition:width .28s}.state{display:flex;justify-content:space-between;margin-top:6px;color:#65758c;font-size:8px}.note{text-align:center;color:#7c899a;font-size:9px;line-height:1.45;padding:3px 18px 15px}
 @media(max-width:440px){.shell{padding:9px 9px 24px}.hero h1{font-size:33px}.online{display:none}.profile-grid{grid-template-columns:1fr}.save{height:42px}}
 </style></head><body><main class="shell">
 <header class="head glass"><span class="logo">A</span><div class="brand"><b>Aero-Node</b><small>One-board emergency link</small></div><span class="online">● GATEWAY ONLINE</span></header>
 <section class="hero"><small>LOCAL RESCUE CHANNEL</small><h1>You are connected.<br>Help can hear you.</h1><p>Share your identity, send a message or attach a short voice note. Keep this page open for replies from rescue command.</p></section>
 <section class="card glass"><div class="title"><b>Your rescue identity</b><span id="identity"></span></div><div class="profile-grid"><input id="name" maxlength="32" placeholder="Name or identifying detail"><button class="primary save" onclick="saveProfile()">Save</button></div><button id="locationButton" class="location" onclick="requestLocation()">⌖ Try to share exact GPS</button><small id="locationHelp" class="help">If exact GPS is unavailable, command will place you near this gateway.</small></section>
-<section class="card glass"><div class="title"><b>Private command chat</b><span>Direct local link</span></div><div id="chat"></div><div class="compose"><textarea id="message" maxlength="160" placeholder="Describe injuries, surroundings or what you need..."></textarea><button class="primary send" onclick="sendMessage('normal')">Send</button></div><button class="sos" onclick="sendMessage('critical')">SEND CRITICAL SOS</button>
-<div class="voice"><div class="voice-top"><span class="mic">MP3</span><div class="voice-copy"><b>Short MP3 voice note</b><small>Select a small MP3 file - transferred without conversion</small></div></div><input hidden id="voiceFile" type="file" accept=".mp3,audio/mpeg"><button id="recordButton" class="record" onclick="document.getElementById('voiceFile').click()">Choose MP3 voice file</button><div id="voiceProgress" class="progress"><div class="track"><div id="voiceBar" class="bar"></div></div><div class="state"><span id="voiceState">Ready</span><span id="voicePercent">0%</span></div></div></div>
+<section class="card glass"><div class="channel-tabs"><button id="privateTab" class="active" onclick="switchChannel('private')">Command chat</button><button id="groupTab" onclick="switchChannel('group')">Node group <b id="memberCount">1</b></button></div><div id="members" class="members"></div><small id="channelNote" class="channel-note"><b>Private:</b> only rescue command can read this conversation.</small><div id="chat"></div><div class="compose"><textarea id="message" maxlength="160" placeholder="Describe injuries, surroundings or what you need..."></textarea><button class="primary send" onclick="sendMessage('normal')">Send</button></div><button id="sosButton" class="sos" onclick="sendMessage('critical')">SEND CRITICAL SOS</button>
+<div id="voicePanel" class="voice"><div class="voice-top"><span class="mic">MP3</span><div class="voice-copy"><b>Short MP3 voice note</b><small>Select a small MP3 file - transferred without conversion</small></div></div><input hidden id="voiceFile" type="file" accept=".mp3,audio/mpeg"><button id="recordButton" class="record" onclick="document.getElementById('voiceFile').click()">Choose MP3 voice file</button><div id="voiceProgress" class="progress"><div class="track"><div id="voiceBar" class="bar"></div></div><div class="state"><span id="voiceState">Ready</span><span id="voicePercent">0%</span></div></div></div>
 </section><p class="note">Demo path: phone Wi-Fi → this ESP32 → USB Serial → command dashboard. No internet is required.</p>
 </main><script>
 let userId=localStorage.getItem('aeroUserId');if(!userId){userId='USR-'+Math.random().toString(36).slice(2,10).toUpperCase();localStorage.setItem('aeroUserId',userId)}
-let survivorName=localStorage.getItem('aeroName')||('Survivor '+userId.slice(-4)),latitude=localStorage.getItem('aeroLat')||'',longitude=localStorage.getItem('aeroLng')||'';
+let survivorName=localStorage.getItem('aeroName')||('Survivor '+userId.slice(-4)),latitude=localStorage.getItem('aeroLat')||'',longitude=localStorage.getItem('aeroLng')||'',activeChannel='private';
 const identity=document.getElementById('identity'),nameInput=document.getElementById('name');identity.textContent=userId;nameInput.value=survivorName;
 const wait=ms=>new Promise(r=>setTimeout(r,ms));function post(path,data){return fetch(path,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data).toString()})}
-function register(){return post('/register',{userId,name:survivorName,lat:latitude,lng:longitude})}function saveProfile(){survivorName=nameInput.value.trim()||survivorName;localStorage.setItem('aeroName',survivorName);register()}
+function register(silent){return post('/register',{userId,name:survivorName,lat:latitude,lng:longitude,silent:silent?'1':'0'})}function saveProfile(){survivorName=nameInput.value.trim()||survivorName;localStorage.setItem('aeroName',survivorName);register(false);loadMembers()}
 function requestLocation(){const b=document.getElementById('locationButton'),h=document.getElementById('locationHelp');if(!window.isSecureContext||!navigator.geolocation){b.textContent='✓ Using gateway-area location';b.className='location warn';h.textContent='This offline HTTP portal cannot request protected GPS. Command can still place you near the gateway.';register();return}b.textContent='Requesting exact GPS…';navigator.geolocation.getCurrentPosition(p=>{latitude=String(p.coords.latitude);longitude=String(p.coords.longitude);localStorage.setItem('aeroLat',latitude);localStorage.setItem('aeroLng',longitude);b.textContent='✓ Exact GPS shared';h.textContent='Rescue command received your coordinates.';register()},()=>{b.textContent='✓ Using gateway-area location';b.className='location warn';register()},{enableHighAccuracy:true,timeout:10000,maximumAge:30000})}
-async function sendMessage(priority){const input=document.getElementById('message'),text=input.value.trim();if(!text&&priority!=='critical')return;const message=text||'Critical SOS — immediate assistance needed';input.value='';await post('/send',{userId,name:survivorName,message,priority,lat:latitude,lng:longitude});loadMessages()}
-function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}let lastJson='';async function loadMessages(){try{const r=await fetch('/messages?userId='+encodeURIComponent(userId)),data=await r.json(),json=JSON.stringify(data);if(json===lastJson)return;lastJson=json;const chat=document.getElementById('chat');chat.innerHTML='';data.forEach(m=>chat.innerHTML+='<div class="msg '+(m.sender==='PHONE'?'mine':'')+'"><small>'+(m.sender==='PHONE'?'YOU':'RESCUE COMMAND')+'</small>'+esc(m.message)+'</div>');chat.scrollTop=chat.scrollHeight}catch(e){}}
+async function sendMessage(priority){const input=document.getElementById('message'),text=input.value.trim();if(!text&&priority!=='critical')return;const message=text||'Critical SOS - immediate assistance needed';input.value='';await post('/send',{userId,name:survivorName,message,priority:activeChannel==='group'?'normal':priority,channel:activeChannel,lat:latitude,lng:longitude});loadMessages()}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}let lastJson='';function switchChannel(channel){activeChannel=channel;lastJson='';document.getElementById('privateTab').className=channel==='private'?'active':'';document.getElementById('groupTab').className=channel==='group'?'active':'';document.getElementById('sosButton').style.display=channel==='private'?'block':'none';document.getElementById('voicePanel').style.display=channel==='private'?'block':'none';document.getElementById('channelNote').innerHTML=channel==='private'?'<b>Private:</b> only rescue command can read this conversation.':'<b>Node group:</b> everyone connected to this Aero-Node can read and reply.';document.getElementById('message').placeholder=channel==='private'?'Describe injuries, surroundings or what you need...':'Message everyone connected to this node...';loadMessages();loadMembers()}
+async function loadMembers(){try{const r=await fetch('/members'),members=await r.json(),box=document.getElementById('members');document.getElementById('memberCount').textContent=String(members.length);box.innerHTML=members.map(m=>'<span><i></i>'+esc(m.id===userId?'You - '+m.name:m.name)+'</span>').join('')}catch(e){}}
+async function loadMessages(){try{const r=await fetch('/messages?userId='+encodeURIComponent(userId)+'&channel='+activeChannel),data=await r.json(),json=JSON.stringify(data);if(json===lastJson)return;lastJson=json;const chat=document.getElementById('chat');chat.innerHTML='';data.forEach(m=>{const mine=m.senderId===userId,label=mine?'YOU - '+survivorName:m.sender==='MASTER'?'RESCUE COMMAND':m.name||'CONNECTED USER';chat.innerHTML+='<div class="msg '+(mine?'mine':'')+'"><small>'+esc(label)+'</small>'+esc(m.message)+'</div>'});chat.scrollTop=chat.scrollHeight}catch(e){}}
 function setVoice(state,percent){document.getElementById('voiceProgress').className='progress show';document.getElementById('voiceState').textContent=state;document.getElementById('voicePercent').textContent=percent+'%';document.getElementById('voiceBar').style.width=percent+'%'}
 async function packMp3(file){const lower=file.name.toLowerCase();if(!lower.endsWith('.mp3')&&file.type!=='audio/mpeg')throw new Error('Please choose an MP3 file');if(!file.size)throw new Error('The MP3 file is empty');if(file.size>120000)throw new Error('MP3 is too large - keep it under 120 KB');const raw=new Uint8Array(await file.arrayBuffer()),hasId3=raw.length>=3&&raw[0]===73&&raw[1]===68&&raw[2]===51,hasFrame=raw.length>=2&&raw[0]===255&&(raw[1]&224)===224;if(!hasId3&&!hasFrame)throw new Error('This file is not a valid MP3');let binary='',hash=2166136261;for(let i=0;i<raw.length;i++){hash=Math.imul(hash^raw[i],16777619);if(i%8192===8191||i===raw.length-1){const start=i-i%8192;binary+=String.fromCharCode.apply(null,raw.subarray(start,i+1))}}return{data:btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''),bytes:raw.length,checksum:(hash>>>0).toString(16),mime:'audio/mpeg'}}
 document.getElementById('voiceFile').addEventListener('change',async e=>{const file=e.target.files[0],button=document.getElementById('recordButton');if(!file)return;button.disabled=true;const started=Date.now();try{setVoice('Reading MP3 file',12);const encoded=await packMp3(file),data=encoded.data;await wait(500);setVoice('MP3 ready - preparing transfer',28);const chunkSize=480,total=Math.ceil(data.length/chunkSize),voiceId='VOICE-'+Date.now().toString(36).toUpperCase();for(let i=0;i<total;i++){const response=await post('/voice',{voiceId,userId,name:survivorName,mime:encoded.mime,index:String(i),total:String(total),chunk:data.slice(i*chunkSize,(i+1)*chunkSize)});if(!response.ok)throw new Error('Gateway rejected MP3 chunk');setVoice('Sending MP3 through Aero-Node',28+Math.round((i+1)/total*62))}const complete=await post('/voice-complete',{voiceId,userId,name:survivorName,mime:encoded.mime,bytes:String(encoded.bytes),chunks:String(total),checksum:encoded.checksum});if(!complete.ok)throw new Error('Gateway rejected MP3 completion');const remaining=5000-(Date.now()-started);if(remaining>0)await wait(remaining);setVoice('MP3 sent and verified',100);loadMessages()}catch(error){setVoice(error.message||'MP3 transfer failed - reconnect and try again',0)}finally{button.disabled=false;e.target.value=''}});
-register();setInterval(loadMessages,900);loadMessages();
+register(false);loadMembers();setInterval(loadMessages,900);setInterval(()=>{register(true);loadMembers()},10000);loadMessages();
 </script></body></html>
 )rawliteral";
 
@@ -120,17 +168,26 @@ void handleHome() { server.send_P(200, "text/html; charset=utf-8", RESCUE_PAGE);
 void handleRegister() {
   String userId = server.arg("userId");
   if (!userId.length()) { server.send(400, "text/plain", "Missing userId"); return; }
-  printPersonPacket("user", userId, server.arg("name"), "", server.arg("lat"), server.arg("lng"), "normal");
+  touchMember(userId, server.arg("name"));
+  if (server.arg("silent") != "1") printPersonPacket("user", userId, server.arg("name"), "", server.arg("lat"), server.arg("lng"), "normal");
   server.send(200, "text/plain", "OK");
 }
 
 void handleSend() {
-  String userId = server.arg("userId"), message = server.arg("message"), priority = server.arg("priority");
+  String userId = server.arg("userId"), name = server.arg("name"), message = server.arg("message");
+  String priority = server.arg("priority"), channel = server.arg("channel");
   message.trim();
   if (!userId.length() || !message.length()) { server.send(400, "text/plain", "Missing message"); return; }
+  touchMember(userId, name);
+  if (channel == "group") {
+    addMessage("PHONE", userId, name, "GROUP", message, "group");
+    printPersonPacket("group_message", userId, name, message, server.arg("lat"), server.arg("lng"), "normal");
+    server.send(200, "text/plain", "OK");
+    return;
+  }
   if (priority != "critical") priority = "normal";
-  addMessage("PHONE", userId, message);
-  printPersonPacket(priority == "critical" ? "sos" : "message", userId, server.arg("name"), message, server.arg("lat"), server.arg("lng"), priority);
+  addMessage("PHONE", userId, name, userId, message, "private");
+  printPersonPacket(priority == "critical" ? "sos" : "message", userId, name, message, server.arg("lat"), server.arg("lng"), priority);
   server.send(200, "text/plain", "OK");
 }
 
@@ -154,7 +211,8 @@ void handleVoiceChunk() {
 void handleVoiceComplete() {
   String voiceId = server.arg("voiceId"), userId = server.arg("userId");
   if (!voiceId.length() || !userId.length()) { server.send(400, "text/plain", "Invalid voice completion"); return; }
-  addMessage("PHONE", userId, "🎙 Voice note sent");
+  touchMember(userId, server.arg("name"));
+  addMessage("PHONE", userId, server.arg("name"), userId, "Voice note sent", "private");
   Serial.print("{\"type\":\"voice_end\",\"voiceId\":\""); Serial.print(jsonEscape(voiceId));
   Serial.print("\",\"userId\":\""); Serial.print(jsonEscape(userId));
   Serial.print("\",\"name\":\""); Serial.print(jsonEscape(server.arg("name")));
@@ -166,13 +224,20 @@ void handleVoiceComplete() {
 }
 
 void handleMessages() {
-  String userId = server.arg("userId"), json = "[";
+  String userId = server.arg("userId"), channel = server.arg("channel"), json = "[";
+  if (channel != "group") channel = "private";
   bool first = true;
   for (int i = 0; i < messageCount; i++) {
-    if (messageRecipient[i] != userId && messageRecipient[i] != "BROADCAST") continue;
+    if (messageChannel[i] != channel) continue;
+    if (channel == "private" && messageRecipient[i] != userId && messageRecipient[i] != "BROADCAST") continue;
+    if (channel == "group" && messageRecipient[i] != "GROUP") continue;
     if (!first) json += ",";
     first = false;
-    json += "{\"sender\":\"" + jsonEscape(messageSender[i]) + "\",\"message\":\"" + jsonEscape(messageText[i]) + "\"}";
+    json += "{\"sender\":\"" + jsonEscape(messageSender[i]);
+    json += "\",\"senderId\":\"" + jsonEscape(messageSenderId[i]);
+    json += "\",\"name\":\"" + jsonEscape(messageSenderName[i]);
+    json += "\",\"message\":\"" + jsonEscape(messageText[i]);
+    json += "\",\"channel\":\"" + jsonEscape(messageChannel[i]) + "\"}";
   }
   json += "]";
   server.send(200, "application/json; charset=utf-8", json);
@@ -184,13 +249,14 @@ void handleSerialCommand(String line) {
   if (line.startsWith("{")) {
     String type = jsonField(line, "type"), recipient = jsonField(line, "to"), message = jsonField(line, "message");
     if (type == "command" && recipient.length() && message.length()) {
-      addMessage("MASTER", recipient, message);
+      bool groupReply = recipient == "GROUP" || recipient == "GROUP:MASTER";
+      addMessage("MASTER", "MASTER", "Rescue command", groupReply ? "GROUP" : recipient, message, groupReply ? "group" : "private");
       Serial.print("{\"type\":\"sent\",\"to\":\""); Serial.print(jsonEscape(recipient));
       Serial.print("\",\"message\":\""); Serial.print(jsonEscape(message)); Serial.println("\"}");
       return;
     }
   }
-  addMessage("MASTER", "BROADCAST", line);
+  addMessage("MASTER", "MASTER", "Rescue command", "BROADCAST", line, "private");
 }
 
 void setup() {
@@ -207,6 +273,7 @@ void setup() {
   server.on("/voice", HTTP_POST, handleVoiceChunk);
   server.on("/voice-complete", HTTP_POST, handleVoiceComplete);
   server.on("/messages", HTTP_GET, handleMessages);
+  server.on("/members", HTTP_GET, handleMembers);
   server.on("/generate_204", HTTP_GET, handleHome);
   server.on("/gen_204", HTTP_GET, handleHome);
   server.on("/hotspot-detect.html", HTTP_GET, handleHome);
@@ -214,7 +281,7 @@ void setup() {
   server.on("/ncsi.txt", HTTP_GET, handleHome);
   server.onNotFound(handleHome);
   server.begin();
-  Serial.println("{\"type\":\"gateway\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"mp3-transfer-v5\",\"status\":\"ready\"}");
+  Serial.println("{\"type\":\"gateway\",\"nodeId\":\"MASTER\",\"label\":\"Single ESP32 Gateway\",\"transport\":\"Wi-Fi + USB Serial\",\"firmware\":\"group-mp3-v6\",\"status\":\"ready\"}");
   Serial.println("Aero-Node ready at http://192.168.4.1");
 }
 

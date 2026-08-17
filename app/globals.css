@@ -204,6 +204,7 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(79, 124, 
 .pending-devices small { margin-top: 4px; color: #95794a; font-size: 8px; }
 .avatar { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 auto; border: 1px solid #cbeee5; border-radius: 14px; color: #087b68; background: linear-gradient(145deg,#e4faf5,#c9eee5); box-shadow: 0 8px 18px rgba(13,132,105,.09); font-size: 14px; font-weight: 850; }
 .avatar.critical { border-color: #ffd2d7; color: #c33948; background: linear-gradient(145deg,#fff0f2,#ffd7dc); box-shadow: 0 8px 18px rgba(195,57,72,.1); }
+.avatar.group { border-color: #d9d4ff; color: #5c4bd1; background: linear-gradient(145deg,#f2f0ff,#ded9ff); box-shadow: 0 8px 20px rgba(91,75,208,.13); font-size: 19px; }
 
 /* Conversations */
 .conversation-shell { position: relative; z-index: 3; display: grid; grid-template-columns: 360px minmax(0,1fr); min-height: 680px; animation: panelIn .42s ease both; }
@@ -214,6 +215,8 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(79, 124, 
 .conversation-scroll > button { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; align-items: center; width: 100%; padding: 13px; gap: 11px; border: 1px solid transparent; border-radius: 16px; background: transparent; text-align: left; transition: .18s ease; }
 .conversation-scroll > button:hover { background: #f1f5fc; }
 .conversation-scroll > button.selected { border-color: #dbe5ff; background: #eaf1ff; box-shadow: 0 8px 25px rgba(49,105,239,.09); }
+.conversation-scroll > button.group-thread { border-color: #ebe8ff; background: linear-gradient(135deg,rgba(245,243,255,.92),rgba(238,245,255,.72)); }
+.conversation-scroll > button.group-thread.selected { border-color: #d8d1ff; background: linear-gradient(135deg,#eeeaff,#e7efff); box-shadow: 0 9px 26px rgba(91,75,208,.12); }
 .conversation-scroll > button > div { min-width: 0; }
 .conversation-scroll b { font-size: 11px; }
 .conversation-scroll p { overflow: hidden; margin: 5px 0; color: #637187; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }

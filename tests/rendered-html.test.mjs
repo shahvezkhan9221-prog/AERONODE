@@ -53,6 +53,9 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /voice_chunk/);
   assert.match(page, /Decoding voice note/);
   assert.match(page, /Voice note checksum verified/);
+  assert.match(page, /group_message/);
+  assert.match(page, /GROUP:\$\{nodeId\}/);
+  assert.match(page, /Shared channel · everyone connected to/);
   const map = await import("node:fs/promises").then(({ readFile }) => readFile(new URL("../app/CommandMap.tsx", import.meta.url), "utf8"));
   assert.match(map, /maps\.googleapis\.com\/maps\/api\/js/);
   assert.match(map, /#e5484d/);
@@ -99,9 +102,13 @@ test("ships the one-ESP text and voice gateway", async () => {
   assert.match(firmware, /accept="\.mp3,audio\/mpeg"/);
   assert.match(firmware, /mime:'audio\/mpeg'/);
   assert.match(firmware, /chunk\.replace\(" ", "\+"\)/);
-  assert.match(firmware, /mp3-transfer-v5/);
+  assert.match(firmware, /group-mp3-v6/);
   assert.match(firmware, /checksum:encoded\.checksum/);
   assert.match(firmware, /MP3 sent and verified/);
+  assert.match(firmware, /server\.on\("\/members"/);
+  assert.match(firmware, /group_message/);
+  assert.match(firmware, /switchChannel\('group'\)/);
+  assert.match(firmware, /GROUP:MASTER/);
   assert.doesNotMatch(firmware, /encodeVoiceWav|packRawVoice/);
   assert.match(firmware, /text\/html; charset=utf-8/);
   assert.doesNotMatch(firmware, /#include <LoRa\.h>|#include <esp_now\.h>|aero_network_secrets/);

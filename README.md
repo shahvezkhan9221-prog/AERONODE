@@ -21,9 +21,9 @@ Enable the Google Maps JavaScript API and restrict the key to the deployed websi
 
 ## ESP32 firmware
 
-For the current one-board demo, flash [`firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino`](firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino). It needs only the ESP32 Arduino core—no Ra-02, ESP-NOW peer, encryption header or second board. It creates the `AERO-NODE` access point and rescue portal at `http://192.168.4.1`, assigns each phone a persistent user ID, reports check-ins and messages as JSON over Serial, and delivers command replies only to the addressed user.
+For the current one-board demo, flash [`firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino`](firmware/aero_single_esp_voice_gateway/aero_single_esp_voice_gateway.ino). It needs only the ESP32 Arduino core—no Ra-02, ESP-NOW peer, encryption header or second board. It creates the `AERO-NODE` access point and rescue portal at `http://192.168.4.1`, assigns each phone a persistent user ID, reports check-ins and messages as JSON over Serial, and provides both private command threads and a shared chat for everyone connected to the same node. The portal lists recently active participant names; presence expires after 35 seconds unless the phone renews its check-in.
 
-The phone portal accepts an MP3 file of up to 120 KB and transfers its bytes unchanged. There is no browser recording or audio transcoding step, which avoids Android codec incompatibilities. Firmware v5 displays a minimum five-second transfer sequence, sends URL-safe Base64 in 480-character chunks through the ESP32 and USB Serial, and verifies an end-to-end FNV-1a checksum before the dashboard creates a playable MP3 message. The dashboard header must show **MP3 TRANSFER READY** after connecting; **FIRMWARE CHECK** means an older sketch is still flashed. This is a local one-board demonstration path, not a LoRa voice transfer.
+The phone portal accepts an MP3 file of up to 120 KB and transfers its bytes unchanged. There is no browser recording or audio transcoding step, which avoids Android codec incompatibilities. Firmware v6 displays a minimum five-second transfer sequence, sends URL-safe Base64 in 480-character chunks through the ESP32 and USB Serial, and verifies an end-to-end FNV-1a checksum before the dashboard creates a playable MP3 message. Shared node messages are also mirrored to the dashboard as a dedicated group conversation, and command can reply to everyone in that group. The dashboard header must show **GROUP + MP3 READY** after connecting; **FIRMWARE CHECK** means an older sketch is still flashed. This is a local one-board demonstration path, not a LoRa voice transfer.
 
 ### One-board demo
 
@@ -32,7 +32,7 @@ The phone portal accepts an MP3 file of up to 120 KB and transfers its bytes unc
 3. Keep the ESP32 attached to the command laptop over USB.
 4. On a phone, join the open `AERO-NODE` Wi-Fi and open `http://192.168.4.1` if the portal does not appear automatically.
 5. In Chrome or Edge on the laptop, open the command dashboard, click **Connect ESP32**, and select the board at 115200 baud.
-6. Send text or SOS from the phone. For voice, use the phone's recorder to save/export a short MP3, then tap **Choose MP3 voice file** and select it. The MP3 appears in that survivor's individual conversation.
+6. Use **Command chat** for private rescue messages or **Node group** to talk with everyone on the same ESP32. Sender names appear above every group message. For voice, use the phone's recorder to save/export a short MP3, then tap **Choose MP3 voice file** in the private command tab.
 
 The sections below describe the optional multi-device experiments and are not required for the one-board demo.
 
