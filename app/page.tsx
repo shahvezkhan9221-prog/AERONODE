@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CommandMap from "./CommandMap";
 
 type Priority = "critical" | "normal";
@@ -15,6 +15,14 @@ type SerialNavigator = Navigator & { serial?: { requestPort(): Promise<SerialPor
 
 const timeNow = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const DEFAULT_MASTER_LOCATION = { lat: 27.602957, lng: 77.594364 };
+const FALLBACK_MASTER_NODE: NodeUnit = {
+  id: "MASTER",
+  label: "Master · Command laptop",
+  online: true,
+  clients: 0,
+  lat: DEFAULT_MASTER_LOCATION.lat,
+  lng: DEFAULT_MASTER_LOCATION.lng,
+};
 const APPROXIMATE_USER_DISTANCE_METERS = 5;
 const METERS_PER_LATITUDE_DEGREE = 111_320;
 const numberOrUndefined = (value: unknown) => {
@@ -45,7 +53,9 @@ const decodeVoicePayload = (payload: string) => {
 
 export default function Home() {
   const [view, setView] = useState<View>("map");
-  const [nodes, setNodes] = useState<NodeUnit[]>([]);
+  // Always show the command node. Browser GPS can refine this position later,
+  // but a denied/timed-out permission must never leave the map without a flag.
+  const [nodes, setNodes] = useState<NodeUnit[]>([FALLBACK_MASTER_NODE]);
   const [people, setPeople] = useState<Person[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -138,6 +148,12 @@ export default function Home() {
       addLog("INFO", `Laptop location unavailable (${error.message}). Using the configured command-center fallback.`);
     }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 });
   }, [addLog, setMasterLocation]);
+
+  useEffect(() => {
+    // Start from the configured coordinate, then silently ask the browser for
+    // the laptop position. This works before a serial gateway is connected.
+    locateMaster();
+  }, [locateMaster]);
 
   const applyLine = useCallback((line: string) => {
     const text = line.trim();
