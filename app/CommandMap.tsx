@@ -41,7 +41,7 @@ type GoogleMaps = {
 type GoogleWindow = Window & { google?: { maps: GoogleMaps } };
 type MarkerRecord = { marker: MarkerInstance; visual: string };
 
-const DEFAULT_CENTER = { lat: 27.602111, lng: 77.597222 };
+const DEFAULT_CENTER = { lat: 27.602957, lng: 77.594364 };
 const NODE_RED = "#e5484d";
 const SURVIVOR_GREEN = "#13aa7d";
 const APPROXIMATE_GREEN = "#4bbf91";
