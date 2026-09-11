@@ -48,11 +48,13 @@ test("ships the expected local-first protocol hooks", async () => {
   assert.match(page, /APPROXIMATE_USER_DISTANCE_METERS = 5/);
   assert.match(page, /const DEFAULT_MASTER_LOCATION = \{ lat: 27\.602957, lng: 77\.594364 \}/);
   assert.match(page, /const \[nodes, setNodes\] = useState<NodeUnit\[\]>\(\[FALLBACK_MASTER_NODE\]\)/);
-  assert.match(page, /useEffect\(\(\) => \{[\s\S]*?locateMaster\(\);[\s\S]*?\}, \[locateMaster\]\)/);
+  assert.match(page, /useEffect\(\(\) => \{[\s\S]*?window\.setTimeout\(locateMaster, 0\)[\s\S]*?\}, \[locateMaster\]\)/);
   assert.match(page, /exactly 5 metres from the red master flag/);
   assert.match(page, /Click map to place master/);
   assert.match(page, /enableHighAccuracy: false/);
   assert.match(page, /Local Wi-Fi\/USB reply/);
+  assert.match(page, /USB serial is unavailable in this browser/);
+  assert.match(page, /The ESP32 port is busy\. Close Arduino Serial Monitor/);
   assert.match(page, /voice_chunk/);
   assert.match(page, /Decoding voice note/);
   assert.match(page, /Voice note checksum verified/);

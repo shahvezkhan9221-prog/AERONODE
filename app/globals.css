@@ -123,6 +123,8 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid rgba(79, 124, 
 .connect-button > span { font-size: 15px; }
 .connect-button:disabled { cursor: wait; opacity: .6; }
 .connect-button.disconnect { color: #c9d5e5; background: rgba(255,255,255,.08); box-shadow: none; }
+.serial-notice { position: relative; z-index: 4; width: fit-content !important; max-width: min(680px, 100%); margin: 11px 8px -5px !important; padding: 9px 12px; border: 1px solid rgba(255,191,102,.3); border-radius: 11px; color: #ffdca8; background: rgba(117,77,20,.25); box-shadow: 0 10px 24px rgba(0,0,0,.12); font-size: 10px; font-weight: 700; line-height: 1.4; }
+.serial-notice.success { border-color: rgba(47,220,179,.28); color: #a8f4df; background: rgba(10,117,90,.22); }
 
 /* Mission summary */
 .command-bar { position: relative; z-index: 2; display: flex; align-items: flex-end; justify-content: space-between; min-height: 220px; padding: 36px 8px 30px; gap: 30px; }

@@ -64,6 +64,7 @@ export default function Home() {
   const [gatewayTransport, setGatewayTransport] = useState("Wi-Fi + USB Serial");
   const [gatewayFirmware, setGatewayFirmware] = useState("Waiting for firmware");
   const [locationState, setLocationState] = useState<"idle" | "locating" | "located" | "manual">("idle");
+  const [connectionNotice, setConnectionNotice] = useState("");
   const [reply, setReply] = useState("");
   const [logs, setLogs] = useState<LogItem[]>([{ id: 1, at: "--:--:--", type: "INFO", text: "Ready. Connect the ESP32 gateway to begin.", bytes: 0 }]);
   const portRef = useRef<SerialPortLike | null>(null);
@@ -152,7 +153,8 @@ export default function Home() {
   useEffect(() => {
     // Start from the configured coordinate, then silently ask the browser for
     // the laptop position. This works before a serial gateway is connected.
-    locateMaster();
+    const startLocationLookup = window.setTimeout(locateMaster, 0);
+    return () => window.clearTimeout(startLocationLookup);
   }, [locateMaster]);
 
   const applyLine = useCallback((line: string) => {
@@ -297,8 +299,14 @@ export default function Home() {
 
   const connectSerial = async () => {
     const serial = (navigator as SerialNavigator).serial;
-    if (!serial) { addLog("ERROR", "Web Serial requires Chrome or Edge over HTTPS."); return; }
+    if (!serial) {
+      const message = "USB serial is unavailable in this browser. Open this dashboard in Google Chrome or Microsoft Edge, then connect the ESP32.";
+      setConnectionNotice(message);
+      addLog("ERROR", message);
+      return;
+    }
     setConnecting(true);
+    setConnectionNotice("Choose the ESP32 USB serial port in the browser prompt.");
     try {
       const port = await serial.requestPort();
       await port.open({ baudRate: 115200 });
@@ -307,12 +315,24 @@ export default function Home() {
       setGatewayTransport("Wi-Fi + USB Serial");
       setGatewayFirmware("Waiting for firmware");
       setConnected(true);
-      addLog("INFO", "ESP32 connected at 115200 baud");
+      const message = "ESP32 connected at 115200 baud. Waiting for the gateway handshake…";
+      setConnectionNotice(message);
+      addLog("INFO", message);
       locateMaster();
       const task = readSerial(port);
       readTaskRef.current = task;
       void task.finally(() => { readTaskRef.current = null; });
-    } catch (error) { setConnected(false); if ((error as Error).name !== "NotFoundError") addLog("ERROR", `Could not connect: ${(error as Error).message}`); }
+    } catch (error) {
+      setConnected(false);
+      const name = (error as Error).name;
+      const message = name === "NotFoundError" ? "No serial port was selected. Click Connect ESP32 and choose the USB device."
+        : name === "InvalidStateError" ? "The ESP32 port is busy. Close Arduino Serial Monitor, any terminal using the port, then try again."
+        : name === "NetworkError" ? "The ESP32 port could not open. Reconnect the USB cable and close Arduino Serial Monitor, then try again."
+        : name === "SecurityError" ? "USB serial permission was blocked. Use Chrome or Edge and allow access to the ESP32 port."
+        : `Could not connect to ESP32: ${(error as Error).message}`;
+      setConnectionNotice(message);
+      addLog("ERROR", message);
+    }
     finally { setConnecting(false); }
   };
 
@@ -325,6 +345,7 @@ export default function Home() {
     setConnected(false);
     setGatewayTransport("Wi-Fi + USB Serial");
     setGatewayFirmware("Waiting for firmware");
+    setConnectionNotice("ESP32 disconnected.");
     addLog("INFO", "ESP32 disconnected");
   };
 
@@ -368,6 +389,7 @@ export default function Home() {
           <button className={`connect-button ${connected ? "disconnect" : ""}`} onClick={connected ? disconnect : connectSerial} disabled={connecting}>{connecting ? "Choose port…" : connected ? "Disconnect" : "Connect ESP32"}<span>→</span></button>
         </div>
       </header>
+      {connectionNotice && <p className={`serial-notice ${connected ? "success" : ""}`} role="status">{connectionNotice}</p>}
 
       <section className="command-bar">
         <div className="command-copy"><p><i /> LIVE RESPONSE COORDINATION <span>/ SINGLE ESP32 GATEWAY</span></p><h1>{view === "map" ? "Field intelligence" : view === "people" ? "Survivor communications" : "Gateway diagnostics"}</h1><span>{view === "map" ? "A single operational picture for the gateway and every connected person." : view === "people" ? "Private command threads plus a shared group for everyone on the same node." : "Real-time Wi-Fi-to-USB Serial visibility for your one-board demonstration."}</span></div>
