@@ -1,0 +1,42 @@
+{
+  "name": "sentinel-mesh-disaster-dashboard",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "train": "tsc scripts/train-model.ts --outDir .tmp/train --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --strict && node .tmp/train/scripts/train-model.js",
+    "test": "npm run test:fusion && npm run test:ml",
+    "test:fusion": "tsc src/lib/types.ts src/lib/fusion.ts --outDir .tmp/test --module commonjs --target es2020 --skipLibCheck && node tests/fusion.test.cjs",
+    "test:ml": "tsc src/lib/ml/index.ts src/lib/fusion.ts src/lib/types.ts --outDir .tmp/test --module commonjs --target es2020 --moduleResolution node --esModuleInterop --skipLibCheck --strict && node tests/ml.test.cjs"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.63.0",
+    "@types/leaflet": "^1.9.22",
+    "dotenv": "17.3.1",
+    "drizzle-orm": "0.45.2",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.44.0",
+    "next": "^16.3.5",
+    "pg": "8.20.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "recharts": "^3.10.1",
+    "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.17",
+    "@types/node": "22.19.15",
+    "@types/pg": "8.18.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "postcss": "8.5.8",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3"
+  }
+}
